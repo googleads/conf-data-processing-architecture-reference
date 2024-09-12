@@ -1,0 +1,26 @@
+diff --git a/boost.BUILD b/boost.BUILD
+index 8eabdd0..47b7961 100644
+--- a/boost.BUILD
++++ b/boost.BUILD
+@@ -451 +451 @@ cc_library(
+-        "@openssl//:ssl",
++        "@boringssl//:ssl",
+diff --git a/boost/boost.bzl b/boost/boost.bzl
+index 1fb144f..4fff9b9 100644
+--- a/boost/boost.bzl
++++ b/boost/boost.bzl
+@@ -168,7 +168,7 @@ def boost_deps():
+-    maybe(
+-        http_archive,
+-        name = "openssl",
+-        url = "https://github.com/hedronvision/boringssl/archive/a8ebd5382dfe1f460a0bea6f514a251fad732e95.tar.gz",
+-        sha256 = "f0112b233bf74cb39e7fb788a9282eb60fe99b02308c05c67c11785dd84c884d",
+-        strip_prefix = "boringssl-a8ebd5382dfe1f460a0bea6f514a251fad732e95",
+-    )
++#    maybe(
++#        http_archive,
++#        name = "openssl",
++#        url = "https://github.com/hedronvision/boringssl/archive/a8ebd5382dfe1f460a0bea6f514a251fad732e95.tar.gz",
++#        sha256 = "f0112b233bf74cb39e7fb788a9282eb60fe99b02308c05c67c11785dd84c884d",
++#        strip_prefix = "boringssl-a8ebd5382dfe1f460a0bea6f514a251fad732e95",
++#    )

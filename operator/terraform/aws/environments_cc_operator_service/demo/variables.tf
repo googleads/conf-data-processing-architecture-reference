@@ -1,0 +1,1 @@
+../../applications/cc-operator-service/variables.tf

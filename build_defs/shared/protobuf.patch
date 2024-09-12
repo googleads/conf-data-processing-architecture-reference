@@ -1,0 +1,212 @@
+diff --git a/BUILD.bazel b/BUILD.bazel
+index a5fa012e1..42e938e09 100644
+--- a/BUILD.bazel
++++ b/BUILD.bazel
+@@ -179,6 +179,14 @@ cc_binary(
+     deps = ["//src/google/protobuf/compiler:protoc_lib"],
+ )
+ 
++cc_binary(
++    name = "js_protoc",
++    copts = COPTS,
++    linkopts = LINK_OPTS,
++    visibility = ["//visibility:public"],
++    deps = ["//src/google/protobuf/compiler:js_protoc_lib"],
++)
++
+ cc_binary(
+     name = "protoc_static",
+     copts = COPTS,
+diff --git a/java/util/BUILD.bazel b/java/util/BUILD.bazel
+index c6ab799a5..731a7305f 100644
+--- a/java/util/BUILD.bazel
++++ b/java/util/BUILD.bazel
+@@ -43,7 +43,7 @@ protobuf_versioned_java_library(
+ # Bazel users, don't depend on this target, use :util.
+ protobuf_java_export(
+     name = "util_mvn",
+-    deploy_env = ["//java/core"],
++    # deploy_env = ["//java/core"],
+     maven_coordinates = "com.google.protobuf:protobuf-java-util:%s" % PROTOBUF_JAVA_VERSION,
+     pom_template = "pom_template.xml",
+     tags = ["manual"],
+diff --git a/src/google/protobuf/compiler/BUILD.bazel b/src/google/protobuf/compiler/BUILD.bazel
+index 9b4c243d1..f8e7830d3 100644
+--- a/src/google/protobuf/compiler/BUILD.bazel
++++ b/src/google/protobuf/compiler/BUILD.bazel
+@@ -140,6 +140,34 @@ cc_library(
+     ],
+ )
+ 
++cc_library(
++    name = "js_protoc_lib",
++    srcs = [
++        "main_js.cc",
++    ],
++    copts = COPTS,
++    visibility = [
++        "//:__pkg__",
++        "//pkg:__pkg__",
++    ],
++    deps = [
++        ":code_generator",
++        ":command_line_interface",
++        ":importer",
++        "//src/google/protobuf:protobuf_nowkt",
++        "//src/google/protobuf/compiler/cpp",
++        "//src/google/protobuf/compiler/csharp",
++        "//src/google/protobuf/compiler/java",
++        "//src/google/protobuf/compiler/objectivec",
++        "//src/google/protobuf/compiler/php",
++        "//src/google/protobuf/compiler/python",
++        "//src/google/protobuf/compiler/ruby",
++        "//src/google/protobuf/compiler/rust",
++        "@com_google_absl//absl/log:initialize",
++        "@com_google_protobuf_javascript//generator:protoc-gen-js-lib",
++    ],
++)
++
+ # Note: this is an alias for now. In the future, this rule will become the
+ # cc_binary for protoc, and //:protoc will become an alias.
+ alias(
+diff --git a/src/google/protobuf/compiler/main_js.cc b/src/google/protobuf/compiler/main_js.cc
+new file mode 100644
+index 000000000..02aeeb021
+--- /dev/null
++++ b/src/google/protobuf/compiler/main_js.cc
+@@ -0,0 +1,135 @@
++// Protocol Buffers - Google's data interchange format
++// Copyright 2008 Google Inc.  All rights reserved.
++// https://developers.google.com/protocol-buffers/
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are
++// met:
++//
++//     * Redistributions of source code must retain the above copyright
++// notice, this list of conditions and the following disclaimer.
++//     * Redistributions in binary form must reproduce the above
++// copyright notice, this list of conditions and the following disclaimer
++// in the documentation and/or other materials provided with the
++// distribution.
++//     * Neither the name of Google Inc. nor the names of its
++// contributors may be used to endorse or promote products derived from
++// this software without specific prior written permission.
++//
++// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++
++#include "absl/log/initialize.h"
++#include "google/protobuf/compiler/command_line_interface.h"
++#include "google/protobuf/compiler/cpp/generator.h"
++#include "google/protobuf/compiler/csharp/csharp_generator.h"
++#include "google/protobuf/compiler/java/generator.h"
++#include "google/protobuf/compiler/java/kotlin_generator.h"
++#include "generator/js_generator.h"
++#include "google/protobuf/compiler/objectivec/generator.h"
++#include "google/protobuf/compiler/php/php_generator.h"
++#include "google/protobuf/compiler/python/generator.h"
++#include "google/protobuf/compiler/python/pyi_generator.h"
++#include "google/protobuf/compiler/ruby/ruby_generator.h"
++#include "google/protobuf/compiler/rust/generator.h"
++
++// Must be included last.
++#include "google/protobuf/port_def.inc"
++
++namespace google {
++namespace protobuf {
++namespace compiler {
++
++int ProtobufMain(int argc, char* argv[]) {
++  absl::InitializeLog();
++
++  CommandLineInterface cli;
++  cli.AllowPlugins("protoc-");
++
++  // Proto2 C++
++  cpp::CppGenerator cpp_generator;
++  cli.RegisterGenerator("--cpp_out", "--cpp_opt", &cpp_generator,
++                        "Generate C++ header and source.");
++
++#ifdef GOOGLE_PROTOBUF_RUNTIME_INCLUDE_BASE
++  cpp_generator.set_opensource_runtime(true);
++  cpp_generator.set_runtime_include_base(GOOGLE_PROTOBUF_RUNTIME_INCLUDE_BASE);
++#endif
++
++  // Proto2 Java
++  java::JavaGenerator java_generator;
++  cli.RegisterGenerator("--java_out", "--java_opt", &java_generator,
++                        "Generate Java source file.");
++
++#ifdef GOOGLE_PROTOBUF_RUNTIME_INCLUDE_BASE
++  java_generator.set_opensource_runtime(true);
++#endif
++
++  // Proto2 Kotlin
++  java::KotlinGenerator kt_generator;
++  cli.RegisterGenerator("--kotlin_out", "--kotlin_opt", &kt_generator,
++                        "Generate Kotlin file.");
++
++
++  // Proto2 Python
++  python::Generator py_generator;
++  cli.RegisterGenerator("--python_out", "--python_opt", &py_generator,
++                        "Generate Python source file.");
++
++#ifdef GOOGLE_PROTOBUF_RUNTIME_INCLUDE_BASE
++  py_generator.set_opensource_runtime(true);
++#endif
++
++  // Python pyi
++  python::PyiGenerator pyi_generator;
++  cli.RegisterGenerator("--pyi_out", &pyi_generator,
++                        "Generate python pyi stub.");
++
++  // PHP
++  php::Generator php_generator;
++  cli.RegisterGenerator("--php_out", "--php_opt", &php_generator,
++                        "Generate PHP source file.");
++
++  // Ruby
++  ruby::Generator rb_generator;
++  cli.RegisterGenerator("--ruby_out", "--ruby_opt", &rb_generator,
++                        "Generate Ruby source file.");
++
++  // CSharp
++  csharp::Generator csharp_generator;
++  cli.RegisterGenerator("--csharp_out", "--csharp_opt", &csharp_generator,
++                        "Generate C# source file.");
++
++  // Objective-C
++  objectivec::ObjectiveCGenerator objc_generator;
++  cli.RegisterGenerator("--objc_out", "--objc_opt", &objc_generator,
++                        "Generate Objective-C header and source.");
++
++  // Rust
++  rust::RustGenerator rust_generator;
++  cli.RegisterGenerator("--rust_out", &rust_generator,
++                        "Generate Rust sources.");
++                        
++  // JavaScript
++  js::Generator js_generator;
++  cli.RegisterGenerator("--js_out", "--js_opt", &js_generator,
++                        "Generate JavaScript source.");
++  return cli.Run(argc, argv);
++}
++
++}  // namespace compiler
++}  // namespace protobuf
++}  // namespace google
++
++int main(int argc, char* argv[]) {
++  return google::protobuf::compiler::ProtobufMain(argc, argv);
++}

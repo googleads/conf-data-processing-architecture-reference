@@ -1,0 +1,282 @@
+# Copyright 2023 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+load("@rules_java//java:defs.bzl", "java_test")
+
+package(default_visibility = ["//visibility:public"])
+
+java_test(
+    name = "GetPublicKeysRequestHandlerTest",
+    srcs = [
+        "GetPublicKeysRequestHandlerTest.java",
+    ],
+    deps = [
+        "//coordinator/protos/keymanagement/keyhosting/api/v1:java_proto",
+        "//coordinator/protos/keymanagement/shared/backend:java_proto",
+        "//java/com/google/scp/coordinator/keymanagement/keyhosting/service/common",
+        "//java/com/google/scp/coordinator/keymanagement/keyhosting/service/gcp:PublicKeyServiceHttpFunction",
+        "//java/com/google/scp/coordinator/keymanagement/shared/dao/common",
+        "//java/com/google/scp/coordinator/keymanagement/shared/dao/testing",
+        "//java/com/google/scp/coordinator/keymanagement/shared/model",
+        "//java/com/google/scp/shared/api/exception",
+        "//java/com/google/scp/shared/api/model",
+        "//java/com/google/scp/shared/mapper",
+        "//java/external:acai",
+        "//java/external:gcp_cloud_function",
+        "//java/external:google_truth",
+        "//java/external:guava",
+        "//java/external:guice",
+        "//java/external:jackson_core",
+        "//java/external:jackson_databind",
+        "//java/external:mockito",
+        "//java/external:protobuf_java_util",
+        "//javatests/com/google/scp/coordinator/keymanagement/testutils",
+    ],
+)
+
+java_test(
+    name = "PublicKeyHostingIntegrationTest",
+    srcs = [
+        "PublicKeyHostingIntegrationTest.java",
+    ],
+    deps = [
+        "//coordinator/protos/keymanagement/keyhosting/api/v1:java_proto",
+        "//coordinator/protos/keymanagement/shared/backend:java_proto",
+        "//java/com/google/scp/coordinator/keymanagement/shared/dao/common",
+        "//java/com/google/scp/coordinator/keymanagement/shared/dao/gcp",
+        "//java/com/google/scp/coordinator/keymanagement/shared/model",
+        "//java/com/google/scp/shared/api/exception",
+        "//java/com/google/scp/shared/api/model",
+        "//java/com/google/scp/shared/mapper",
+        "//java/external:acai",
+        "//java/external:gcp_cloud_function",
+        "//java/external:gcp_spanner",
+        "//java/external:google_truth",
+        "//java/external:guice",
+        "//java/external:jackson_core",
+        "//java/external:jackson_databind",
+        "//java/external:protobuf_java_util",
+        "//java/external:resilience4j_core",
+        "//java/external:resilience4j_retry",
+        "//javatests/com/google/scp/coordinator/keymanagement/testutils",
+        "//javatests/com/google/scp/coordinator/keymanagement/testutils/gcp",
+        "//javatests/com/google/scp/coordinator/keymanagement/testutils/gcp/cloudfunction",
+        "//javatests/com/google/scp/shared/testutils/common",
+        "//javatests/com/google/scp/shared/testutils/gcp",
+        "//shared/protos/api/v1:java_proto",
+    ],
+)
+
+java_test(
+    name = "PublicKeyServiceHttpFunctionTest",
+    srcs = [
+        "PublicKeyServiceHttpFunctionTest.java",
+    ],
+    deps = [
+        "//coordinator/protos/keymanagement/keyhosting/api/v1:java_proto",
+        "//java/com/google/scp/coordinator/keymanagement/keyhosting/service/common",
+        "//java/com/google/scp/coordinator/keymanagement/keyhosting/service/gcp:PublicKeyServiceHttpFunction",
+        "//java/com/google/scp/coordinator/keymanagement/shared/dao/common",
+        "//java/com/google/scp/coordinator/keymanagement/shared/dao/testing",
+        "//java/com/google/scp/coordinator/keymanagement/shared/model",
+        "//java/com/google/scp/shared/api/exception",
+        "//java/com/google/scp/shared/api/model",
+        "//java/external:acai",
+        "//java/external:gcp_cloud_function",
+        "//java/external:google_truth",
+        "//java/external:guava",
+        "//java/external:guice",
+        "//java/external:mockito",
+        "//javatests/com/google/scp/coordinator/keymanagement/testutils",
+    ],
+)
+
+java_test(
+    name = "GetEncryptionKeyRequestHandlerTest",
+    srcs = [
+        "GetEncryptionKeyRequestHandlerTest.java",
+    ],
+    deps = [
+        "//coordinator/protos/keymanagement/keyhosting/api/v1:java_proto",
+        "//coordinator/protos/keymanagement/shared/api/v1:java_proto",
+        "//coordinator/protos/keymanagement/shared/backend:java_proto",
+        "//java/com/google/scp/coordinator/keymanagement/keyhosting/service/common",
+        "//java/com/google/scp/coordinator/keymanagement/keyhosting/service/gcp:EncryptionKeyServiceHttpFunction",
+        "//java/com/google/scp/coordinator/keymanagement/shared/dao/common",
+        "//java/com/google/scp/coordinator/keymanagement/shared/dao/testing",
+        "//java/com/google/scp/coordinator/keymanagement/shared/model",
+        "//java/com/google/scp/shared/api/exception",
+        "//java/com/google/scp/shared/api/model",
+        "//java/com/google/scp/shared/mapper",
+        "//java/external:acai",
+        "//java/external:gcp_cloud_function",
+        "//java/external:google_truth",
+        "//java/external:guava",
+        "//java/external:guice",
+        "//java/external:jackson_core",
+        "//java/external:jackson_databind",
+        "//java/external:mockito",
+        "//java/external:protobuf_java_util",
+        "//javatests/com/google/scp/coordinator/keymanagement/testutils",
+    ],
+)
+
+java_test(
+    name = "EncryptionKeyServiceHttpFunctionTest",
+    srcs = [
+        "EncryptionKeyServiceHttpFunctionTest.java",
+    ],
+    deps = [
+        "//coordinator/protos/keymanagement/keyhosting/api/v1:java_proto",
+        "//java/com/google/scp/coordinator/keymanagement/keyhosting/service/common",
+        "//java/com/google/scp/coordinator/keymanagement/keyhosting/service/gcp:EncryptionKeyServiceHttpFunction",
+        "//java/com/google/scp/coordinator/keymanagement/shared/dao/common",
+        "//java/com/google/scp/coordinator/keymanagement/shared/dao/testing",
+        "//java/com/google/scp/coordinator/keymanagement/shared/model",
+        "//java/com/google/scp/shared/api/exception",
+        "//java/com/google/scp/shared/api/model",
+        "//java/external:acai",
+        "//java/external:gcp_cloud_function",
+        "//java/external:google_truth",
+        "//java/external:guava",
+        "//java/external:guice",
+        "//java/external:mockito",
+        "//javatests/com/google/scp/coordinator/keymanagement/testutils",
+    ],
+)
+
+java_test(
+    name = "EncryptionKeyServiceIntegrationTest",
+    srcs = [
+        "EncryptionKeyServiceIntegrationTest.java",
+    ],
+    deps = [
+        "//coordinator/protos/keymanagement/keyhosting/api/v1:java_proto",
+        "//coordinator/protos/keymanagement/keyhosting/api/v1:proto",
+        "//coordinator/protos/keymanagement/shared/backend:java_proto",
+        "//java/com/google/scp/coordinator/keymanagement/shared/dao/common",
+        "//java/com/google/scp/coordinator/keymanagement/shared/dao/gcp",
+        "//java/com/google/scp/coordinator/keymanagement/shared/model",
+        "//java/com/google/scp/shared/api/exception",
+        "//java/com/google/scp/shared/api/model",
+        "//java/com/google/scp/shared/api/util",
+        "//java/com/google/scp/shared/mapper",
+        "//java/external:acai",
+        "//java/external:gcp_cloud_function",
+        "//java/external:gcp_spanner",
+        "//java/external:google_truth",
+        "//java/external:guice",
+        "//java/external:jackson_core",
+        "//java/external:jackson_databind",
+        "//java/external:protobuf_java_util",
+        "//java/external:resilience4j_core",
+        "//java/external:resilience4j_retry",
+        "//javatests/com/google/scp/coordinator/keymanagement/testutils",
+        "//javatests/com/google/scp/coordinator/keymanagement/testutils/gcp",
+        "//javatests/com/google/scp/coordinator/keymanagement/testutils/gcp/cloudfunction",
+        "//javatests/com/google/scp/shared/testutils/common",
+        "//javatests/com/google/scp/shared/testutils/gcp",
+        "//shared/protos/api/v1:java_proto",
+    ],
+)
+
+java_test(
+    name = "ListRecentEncryptionKeysRequestHandlerTest",
+    srcs = [
+        "ListRecentEncryptionKeysRequestHandlerTest.java",
+    ],
+    deps = [
+        "//coordinator/protos/keymanagement/keyhosting/api/v1:java_proto",
+        "//coordinator/protos/keymanagement/shared/api/v1:java_proto",
+        "//coordinator/protos/keymanagement/shared/backend:java_proto",
+        "//java/com/google/scp/coordinator/keymanagement/keyhosting/service/common",
+        "//java/com/google/scp/coordinator/keymanagement/keyhosting/service/gcp:EncryptionKeyServiceHttpFunction",
+        "//java/com/google/scp/coordinator/keymanagement/shared/dao/common",
+        "//java/com/google/scp/coordinator/keymanagement/shared/dao/testing",
+        "//java/com/google/scp/coordinator/keymanagement/shared/model",
+        "//java/com/google/scp/shared/api/exception",
+        "//java/com/google/scp/shared/api/model",
+        "//java/com/google/scp/shared/mapper",
+        "//java/external:acai",
+        "//java/external:gcp_cloud_function",
+        "//java/external:google_truth",
+        "//java/external:guava",
+        "//java/external:guice",
+        "//java/external:jackson_core",
+        "//java/external:jackson_databind",
+        "//java/external:mockito",
+        "//java/external:protobuf_java_util",
+        "//javatests/com/google/scp/coordinator/keymanagement/testutils",
+    ],
+)
+
+java_test(
+    name = "PublicKeyServiceTest",
+    srcs = [
+        "PublicKeyServiceTest.java",
+    ],
+    runtime_deps = [
+        "//java/com/google/scp/coordinator/keymanagement/keyhosting/service/gcp:PublicKeyService_deploy.jar",
+    ],
+    deps = [
+        "//coordinator/protos/keymanagement/keyhosting/api/v1:java_proto",
+        "//java/com/google/scp/coordinator/keymanagement/shared/dao/common",
+        "//java/com/google/scp/coordinator/keymanagement/shared/dao/gcp",
+        "//java/external:acai",
+        "//java/external:apache_httpclient",
+        "//java/external:apache_httpcore",
+        "//java/external:gcp_function_invoker",
+        "//java/external:gcp_spanner",
+        "//java/external:google_truth",
+        "//java/external:guice",
+        "//java/external:protobuf_java_util",
+        "//java/external:slf4j",
+        "//java/external:testcontainers",
+        "//javatests/com/google/scp/coordinator/keymanagement/shared/dao/gcp",
+        "//javatests/com/google/scp/coordinator/keymanagement/testutils",
+        "//javatests/com/google/scp/coordinator/keymanagement/testutils/gcp",
+        "//javatests/com/google/scp/shared/testutils/gcp",
+    ],
+)
+
+java_test(
+    name = "EncryptionKeyServiceTest",
+    srcs = [
+        "EncryptionKeyServiceTest.java",
+    ],
+    runtime_deps = [
+        "//java/com/google/scp/coordinator/keymanagement/keyhosting/service/gcp:EncryptionKeyService_deploy.jar",
+    ],
+    deps = [
+        "//coordinator/protos/keymanagement/keyhosting/api/v1:java_proto",
+        "//coordinator/protos/keymanagement/shared/api/v1:java_proto",
+        "//coordinator/protos/keymanagement/shared/backend:java_proto",
+        "//java/com/google/scp/coordinator/keymanagement/shared/dao/common",
+        "//java/com/google/scp/coordinator/keymanagement/shared/dao/gcp",
+        "//java/com/google/scp/shared/api/model",
+        "//java/external:acai",
+        "//java/external:apache_httpclient",
+        "//java/external:apache_httpcore",
+        "//java/external:gcp_function_invoker",
+        "//java/external:gcp_spanner",
+        "//java/external:google_truth",
+        "//java/external:guice",
+        "//java/external:protobuf_java_util",
+        "//java/external:slf4j",
+        "//java/external:testcontainers",
+        "//javatests/com/google/scp/coordinator/keymanagement/shared/dao/gcp",
+        "//javatests/com/google/scp/coordinator/keymanagement/testutils",
+        "//javatests/com/google/scp/shared/testutils/gcp",
+    ],
+)

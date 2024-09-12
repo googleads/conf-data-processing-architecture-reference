@@ -1,0 +1,132 @@
+# Copyright 2024 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+openapi: 3.0.0
+info:
+  title: Public Key Service API
+  version: 1.0.0-beta
+paths:
+  /v1beta/sets/{name}/publicKeys{format}:
+    get:
+      description: Get active public keys.
+      parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Key set name.
+      - name: format
+        in: path
+        required: true
+        schema:
+          type: string
+          enum:
+          - ""
+          - ":raw"
+          default: ""
+        description: |
+          Format keys are returned in.
+          
+          * `""` - Base64 Tink binary keyset format.
+          * `":raw"` - Object containing HPKE details.
+      responses:
+        '200':
+          description: Active public keys.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicKeyList'
+  /v1alpha/publicKeys{format}:
+    get:
+      description: Get active public keys.
+      parameters:
+      - name: format
+        in: path
+        required: true
+        schema:
+          type: string
+          enum:
+          - ""
+          - ":tink"
+          - ":raw"
+          default: ""
+        description: |
+          Format keys are returned in.
+          
+          * `""` - (Deprecated) Raw key material only.
+          * `":tink"` - Base64 Tink binary keyset format.
+          * `":raw"` - Object containing HPKE details.
+      responses:
+        '200':
+          description: Active public keys.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicKeyList'
+components:
+  schemas:
+    PublicKeyList:
+      type: object
+      description: List of public keys.
+      properties:
+        keys:
+          type: array
+          items:
+            $ref: '#/components/schemas/PublicKey'
+    PublicKey:
+      type: object
+      description: Public key.
+      properties:
+        id:
+          type: string
+          description: |
+            Key ID. Note: treat the value as an opaque key and do not assume the
+            format of the content.
+          example: "03d639f3-0dab-4c20-a944-888e15f50bc9"
+        tinkBinary:
+          type: string
+          description: Key in base64 encoded Tink binary keyset.
+          example: "CPPB04UOEtgBCssBCjR0eXBlLmdvb2dsZWFwaXMuY29tL2dvb2dsZS5jcnlwdG8udGluay5IcGtlUHVibGljS2V5EpABEgYIBBADGAIahQEEAIXISvtGTXbO2Q92fzEWmB6Q/T1DEK26rDusJeAy1bUpAQY+OnnXeJli0VfwSnQM9KDSgyn/RKVBWb65wfRH7VRCAWhK5qgyCps8aCZyfTMns7wAyNWmUoJw/7FvaSWE1vB7cHSB5Zw9tKdKmhdJR0poeE0aUtLumqdWT9q5WJZyvkLwGAMQARjzwdOFDiAD"
+        hpkePublicKey:
+          type: object
+          description: Key as an object containing HPKE details.
+          properties:
+            params:
+              type: object
+              description: Cryptographic algorithm parameters.
+              properties:
+                kem:
+                  type: string
+                  description: Key encapsulation mechanism.
+                  example: "DHKEM_P521_HKDF_SHA512"
+                kdf:
+                  type: string
+                  description: Key derivation function.
+                  example: "HKDF_SHA512"
+                aead:
+                  type: string
+                  description: Authenticated encryption with associated data algorithm.
+                  example: "AES_256_GCM"
+            publicKey:
+              type: string
+              description: Raw key material im base64.
+              example: "BAGjRCUR8pz0QWW+//J+e0MtppTbDsDgrby+kDL6lTsszgtRwA/ydlhj/8CfbedsC6MVH6Yo+aizGweHoDpeDO5H2wBDydf9g5JILrAg6P+xQryNmvuPxt0b9V0ZSl/zGHgBiHjajwOxoeFJFU34/MyKZvxbOuYVsLTInidj2uD/061X6A=="
+            version:
+              type: integer
+              description: Version of the schema.
+        key:
+          type: string
+          description: (Deprecated) Raw key material in base64.
+          example: "BAGjRCUR8pz0QWW+//J+e0MtppTbDsDgrby+kDL6lTsszgtRwA/ydlhj/8CfbedsC6MVH6Yo+aizGweHoDpeDO5H2wBDydf9g5JILrAg6P+xQryNmvuPxt0b9V0ZSl/zGHgBiHjajwOxoeFJFU34/MyKZvxbOuYVsLTInidj2uD/061X6A=="

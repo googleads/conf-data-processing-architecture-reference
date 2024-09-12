@@ -1,0 +1,141 @@
+// Copyright 2022 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package google.cmrt.sdk.job_lifecycle_helper.v1;
+
+option java_multiple_files = true;
+option java_outer_classname = "JobLifecycleHelperProto";
+option java_package = "com.google.cmrt.sdk.job_lifecycle_helper.v1";
+
+import "cc/core/common/proto/common.proto";
+import "cc/public/cpio/proto/job_service/v1/job_service.proto";
+import "google/protobuf/duration.proto";
+
+// For faster allocations of sub-messages.
+option cc_enable_arenas = true;
+
+// Request to prepare the next available job from the job queue.
+message PrepareNextJobRequest {
+  // The flag that keep extending visibility timeout for a job. Set it to false
+  // will make the job visible to other workers after timeout.
+  bool is_visibility_timeout_extendable = 1;
+}
+
+// Response of preparing next job.
+message PrepareNextJobResponse {
+  // The execution result.
+  scp.core.common.proto.ExecutionResult result = 1;
+  // The job data of the job that is ready to be processed.
+  job_service.v1.Job job = 2;
+}
+
+// Request to mark a job completed.
+message MarkJobCompletedRequest {
+  // The Id of the job.
+  string job_id = 1;
+  // The status of the job to be completed. Only JOB_STATUS_SUCCESS or
+  // JOB_STATUS_FAILURE is accepted.
+  job_service.v1.JobStatus job_status = 2;
+}
+
+// Response of marking a job completed.
+message MarkJobCompletedResponse {
+  // The execution result.
+  scp.core.common.proto.ExecutionResult result = 1;
+}
+
+// Request to release a job for retry.
+// A job not in finished state (JOB_STATUS_SUCCESS or JOB_STATUS_FAILURE) is
+// always staying in the queue. It is not visible for other workers until
+// visibility timeout expires. This request allow current worker to release a
+// job and make it available for other worker to process.
+message ReleaseJobForRetryRequest {
+  // The Id of the job.
+  string job_id = 1;
+  // Optional. The waiting period before the job become visible for other
+  // workers. If not set, the job will become visible as soon as the request is
+  // finished.
+  // Only seconds from the duration will be used.
+  optional google.protobuf.Duration duration_before_release = 2;
+}
+
+// Response of release a job for retry.
+message ReleaseJobForRetryResponse {
+  // The execution result.
+  scp.core.common.proto.ExecutionResult result = 1;
+}
+
+// The job message metadata.
+message JobMessageMetadata {
+  // The Id of the job.
+  string job_id = 1;
+
+  // The receipt info associated with the job.
+  // This field can and only be retrieved from GetNextJobResponse in JobClient.
+  string receipt_info = 2;
+
+  // The flag that keep extending visibility timeout for a job. Set it to false
+  // will make the job visible to other workers after timeout.
+  bool is_visibility_timeout_extendable = 3;
+}
+
+// The options of Metrics in JobLifecycleHelper.
+message JobLifecycleHelperMetricOptions {
+  // The flag that enable metrics recording.
+  bool enable_metrics_recording = 1;
+
+  // The metric namespace to use when recording server metrics.
+  // If the batch recording is enabled, this namespace can be empty.
+  // Otherwise, this namesapce has to be matched with the namspace for batch
+  // recording in metric client.
+  string metric_namespace = 2;
+}
+
+// The options of JobLifecycleHelper.
+message JobLifecycleHelperOptions {
+  // The retry limit of a job.
+  int32 retry_limit = 1;
+
+  // The time everytime the visiblity timeout of a job is extended.
+  google.protobuf.Duration visibility_timeout_extend_time_seconds = 2;
+
+  // The processing timeout of a job. After this timeout, the visiblity
+  // timeout of the job will no longer be extended. This will make the job
+  // visible for other worker to process.
+  google.protobuf.Duration job_processing_timeout_seconds = 3;
+
+  // The time the job extending worker pauses before it restarts.
+  google.protobuf.Duration job_extending_worker_sleep_time_seconds = 4;
+
+  // The current instance resource name.
+  // For AWS, returns the Amazon Resource Name (ARN) of current instance:
+  // `arn:aws:ec2:<REGION>:<ACCOUNT_ID>:instance/<INSTANCE_ID>`
+  // For more information about ARNs, see
+  // https://docs.aws.amazon.com/general/latest/gr/aws-arns-and-namespaces.html
+  // For GCP, it is the full resource name of instance:
+  // `//compute.googleapis.com/projects/{PROJECT_ID}/zones/{ZONE_ID}/instances/{INSTANCE_ID}`.
+  // For more information about GCP full resource name, see
+  // https://cloud.google.com/iam/docs/full-resource-names
+  // TODO: Make AutoScalingClient get current instance resource name directly.
+  string current_instance_resource_name = 5;
+
+  // The name of scale-in hook. It is the lifecycle hook in AWS, and the
+  // instance group name in GCP.
+  string scale_in_hook_name = 6;
+
+  // The options for metrics in JobLifecycleHelper.
+  JobLifecycleHelperMetricOptions metric_options = 7;
+}

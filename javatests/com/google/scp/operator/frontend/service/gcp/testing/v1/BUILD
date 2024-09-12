@@ -1,0 +1,155 @@
+# Copyright 2023 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+load("@rules_java//java:defs.bzl", "java_binary", "java_library")
+
+package(default_visibility = ["//visibility:public"])
+
+java_library(
+    name = "FrontendServiceV1Module",
+    srcs = glob([
+        "FrontendServiceV1Module.java",
+    ]),
+    deps = [
+        "//java/com/google/scp/operator/frontend/service/gcp",
+        "//java/external:guice",
+    ],
+)
+
+java_library(
+    name = "LocalFrontendServiceV1HttpFunction",
+    testonly = True,
+    srcs = [
+        "LocalFrontendServiceV1HttpFunction.java",
+    ],
+    deps = [
+        ":FrontendServiceV1Module",
+        "//java/com/google/scp/operator/frontend/service/gcp",
+        "//java/external:gcp_core",
+        "//java/external:gcp_spanner",
+        "//java/external:guice",
+        "//java/external:testcontainers",
+        "//javatests/com/google/scp/operator/frontend/service/gcp/testing:FrontendServiceHttpFunctionTestModule",
+    ],
+)
+
+java_binary(
+    name = "LocalFrontendServiceV1HttpCloudFunction",
+    testonly = True,
+    runtime_deps = [
+        ":LocalFrontendServiceV1HttpFunction",
+    ],
+)
+
+alias(
+    name = "LocalFrontendServiceV1HttpCloudFunctionDeploy",
+    testonly = True,
+    actual = ":LocalFrontendServiceV1HttpCloudFunction_deploy.jar",
+)
+
+java_library(
+    name = "FrontendServiceV1CloudFunctionEmulatorContainer",
+    srcs = ["FrontendServiceV1CloudFunctionEmulatorContainer.java"],
+    runtime_deps = [
+        ":LocalFrontendServiceV1HttpCloudFunctionDeploy",
+        "//java/external:gcp_function_invoker",
+    ],
+    deps = [
+        "//java/external:guice",
+        "//javatests/com/google/scp/shared/testutils/gcp",
+    ],
+)
+
+java_library(
+    name = "FrontendServiceV1IntegrationTestEnv",
+    srcs = glob([
+        "FrontendServiceV1IntegrationTestEnv.java",
+    ]),
+    deps = [
+        ":FrontendServiceV1CloudFunctionEmulatorContainer",
+        "//java/com/google/scp/operator/shared/dao/metadatadb/common",
+        "//java/external:gcp_spanner",
+        "//java/external:guice",
+        "//javatests/com/google/scp/operator/frontend/service/gcp/testing:FrontendServiceIntegrationTestModule",
+        "//javatests/com/google/scp/operator/shared/dao/metadatadb/gcp",
+        "//javatests/com/google/scp/shared/testutils/gcp",
+    ],
+)
+
+java_test(
+    name = "FrontendServiceV1HttpFunctionTest",
+    srcs = [
+        "FrontendServiceV1HttpFunctionTest.java",
+    ],
+    deps = [
+        "//java/com/google/scp/operator/frontend/service/gcp",
+        "//java/com/google/scp/shared/api/model",
+        "//java/external:acai",
+        "//java/external:gcp_cloud_function",
+        "//java/external:google_truth",
+        "//java/external:guava",
+        "//java/external:guice",
+        "//java/external:jackson_core",
+        "//java/external:jackson_databind",
+        "//java/external:mockito",
+        "//java/external:protobuf_java_util",
+        "//operator/protos/frontend/api/v1:java_proto",
+    ],
+)
+
+java_test(
+    name = "GcpFrontendServiceV1IntegrationTest",
+    srcs = [
+        "GcpFrontendServiceV1IntegrationTest.java",
+    ],
+    deps = [
+        ":FrontendServiceV1IntegrationTestEnv",
+        "//java/com/google/scp/operator/frontend/service/model",
+        "//java/com/google/scp/operator/shared/dao/jobqueue/common",
+        "//java/com/google/scp/operator/shared/dao/jobqueue/gcp",
+        "//java/com/google/scp/shared/api/model",
+        "//java/external:acai",
+        "//java/external:autovalue",
+        "//java/external:autovalue_annotations",
+        "//java/external:gcp_api_gax",
+        "//java/external:gcp_cloud_function",
+        "//java/external:gcp_core",
+        "//java/external:gcp_gax_grpc",
+        "//java/external:gcp_pubsub",
+        "//java/external:gcp_pubsub_v1",
+        "//java/external:gcp_spanner",
+        "//java/external:google_truth",
+        "//java/external:google_truth8",
+        "//java/external:grpc_api",
+        "//java/external:guava",
+        "//java/external:guice",
+        "//java/external:guice-testlib",
+        "//java/external:jackson_annotations",
+        "//java/external:jackson_core",
+        "//java/external:jackson_databind",
+        "//java/external:javax_inject",
+        "//java/external:localstack_containers",
+        "//java/external:protobuf_java",
+        "//java/external:protobuf_java_util",
+        "//java/external:slf4j",
+        "//java/external:slf4j_simple",
+        "//java/external:testcontainers",
+        "//java/external:tink",
+        "//java/external:tink-gcpkms",
+        "//javatests/com/google/scp/shared/testutils/common",
+        "//javatests/com/google/scp/shared/testutils/gcp",
+        "//operator/protos/frontend/api/v1:java_proto",
+        "//operator/protos/shared/backend/jobqueue:java_proto",
+    ],
+)

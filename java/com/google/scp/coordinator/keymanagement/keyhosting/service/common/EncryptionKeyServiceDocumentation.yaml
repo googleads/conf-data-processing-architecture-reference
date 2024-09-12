@@ -1,0 +1,183 @@
+# Copyright 2024 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+openapi: 3.0.0
+info:
+  title: Encryption Key Service API
+  version: 1.0.0-beta
+paths:
+  /v1beta/encryptionKeys/{id}:
+    get:
+      description: Get encryption key by ID.
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Key ID.
+      responses:
+        '200':
+          description: Encryption key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EncryptionKey'
+  /v1beta/sets/{name}/encryptionKeys:recent:
+    get:
+      description: Get most recent encryption keys.
+      parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Key set name.
+      - name: maxAgeSeconds
+        in: query
+        required: true
+        schema:
+          type: integer
+        description: Maximum age of keys to return in seconds.
+      responses:
+        '200':
+          description: Encryption keys.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/EncryptionKeyList'
+  /v1alpha/encryptionKeys/{id}:
+    get:
+      description: Get encryption key by ID.
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Key ID.
+      responses:
+        '200':
+          description: Encryption key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EncryptionKey'
+  /v1alpha/encryptionKeys:recent:
+    get:
+      description: Get most recent encryption keys.
+      parameters:
+      - name: maxAgeSeconds
+        in: query
+        required: true
+        schema:
+          type: integer
+        description: Maximum age of keys to return in seconds.
+      responses:
+        '200':
+          description: Encryption keys.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/EncryptionKeyList'
+components:
+  schemas:
+    EncryptionKeyList:
+      type: object
+      description: List of encryption keys.
+      properties:
+        keys:
+          type: array
+          items:
+            $ref: '#/components/schemas/EncryptionKey'
+    EncryptionKey:
+      type: object
+      description: Encryption key.
+      properties:
+        name:
+          type: string
+          description: Unique resource identifier.
+          example: "encryptionKeys/f22e423e-7c69-4101-95bb-f5226359ffd1"
+        setName:
+          type: string
+          description: Name of key set this key belongs to.
+        encryptionKeyType:
+          type: string
+          description: The type of key, and how it is split.
+        publicKeysetHandle:
+          type: string
+          description: Tink keyset handle containing the public key material.
+          example: "{\"primaryKeyId\":1101854660,\"key\":[{\"keyData\":{\"typeUrl\":\"type.googleapis.com/google.crypto.tink.HpkePublicKey\",\"value\":\"EgYIARABGAMaIFhvHwHESjV87aNEDaenY4VhI2U7bh6cz+5VxXyrSjAf\",\"keyMaterialType\":\"ASYMMETRIC_PUBLIC\"},\"status\":\"ENABLED\",\"keyId\":1101854660,\"outputPrefixType\":\"RAW\"}]}\n"
+        publicKeyMaterial:
+          type: string
+          description: The raw public key material, base64 encoded.
+          example: "WG8fAcRKNXzto0QNp6djhWEjZTtuHpzP7lXFfKtKMB8="
+        creationTime:
+          type: string
+          description: Key creation time in Unix epoch milliseconds.
+          example: "1715190514290"
+        activationTime:
+          type: string
+          description: |
+            Timestamp, represented in epoch milliseconds, when keys are first made
+            active and available through the API for encryption.
+          example: "1715795304472"
+        expirationTime:
+          type: string
+          description: |
+            Timestamp, represented in Unix epoch milliseconds, when clients are
+            expected to no longer use this key for encypting new payloads.
+            
+            Depending on use case, clients may still continue to encrypt payloads with
+            an "expired" key if the client does not yet have new keys available yet.
+            
+            Payload processing servers should continue to have access to and cache keys
+            until ttl_time. The "expiration" time should only be used by a payload
+            processing server to determine when clients are expected to stop encrypting
+            new payloads with this key.
+          example: "1716486504472"
+        ttlTime:
+          type: integer
+          description: |
+            Timestamp, represented in epoch seconds, when this key is removed from
+            database and will stop being returned to payload processing servers.
+            
+            TTL time is represented in seconds, rather than milliseconds, due to
+            DynamoDB TTL requirements.
+          example: 1747331304
+        keyData:
+          type: array
+          description: List of KeyData
+          items:
+            type: object
+            properties:
+              publicKeySignature:
+                type: string
+                description: |
+                  URI of the cloud KMS key used to encrypt the keyMaterial (also used to identify who owns the
+                  key material, and the signer of publicKeySignature)
+              keyEncryptionKeyUri:
+                type: string
+                description: |
+                  Cryptographic signature of the public key material from the coordinator identified by
+                  keyEncryptionKeyUri
+                example: "gcp-kms://projects/my-cloud-project/locations/us/keyRings/key_encryption_ring/cryptoKeys/key_encryption_key"
+              keyMaterial:
+                type: string
+                description: The encrypted key material, of type defined by EncryptionKeyType of the EncryptionKey.
+                example: "CiQAuRWyzdPxSl5ptujHSL70/2alHNKsVs/7MwTxyGZd0CJnRqYSyQEAAwpZiiqUQZ4nPUEs0CxVi4mYOZTHUq80MRVk1rpbuHoFWZ+EWxb91bcho4RyEX35ZFq4zGtkTZTmom0ctBUdSoDk1m1hLxjF0ZffHNMu7ymLw61BU9aGrKFOVdjq2X+z1xfH9SNg6ea/w3yCldhh9lUotoYrQQLm2TCoTjTZSa/Z5LND/McDyauKU0GyJMolG5n2LbLye29PhqgmWVcCaRXkMtM1KjFys40HQVrgq1nB7UjL7DuKVK29ya/YkarKYLTW6SWLfTg="

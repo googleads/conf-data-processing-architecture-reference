@@ -1,0 +1,48 @@
+// Copyright 2023 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package google.cmrt.sdk.common.v1;
+
+option java_outer_classname = "CloudIdentityInfoProto";
+option java_package = "com.google.cmrt.sdk.common.v1";
+
+// For faster allocations of sub-messages.
+option cc_enable_arenas = true;
+
+message GcpAttestationInfo {
+  // Workload identity pool provider for attestation
+  string wip_provider = 1;
+}
+
+message AwsAttestationInfo {
+  // IAM role arn for aws attestation
+  string iam_role_arn = 1;
+}
+
+message AttestationInfo {
+  oneof attestation_info {
+    GcpAttestationInfo gcp_attestation_info = 1;
+    AwsAttestationInfo aws_attestation_info = 2;
+  }
+}
+
+message CloudIdentityInfo {
+  // Identifier for cloud provider account
+  // Account id for aws and project id for gcp
+  string owner_id = 1;
+  // Attestation info for cloud provider
+  optional AttestationInfo attestation_info = 2;
+}

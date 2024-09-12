@@ -1,0 +1,309 @@
+// Copyright 2022 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package google.cmrt.sdk.crypto_service.v1;
+
+option java_multiple_files = true;
+option java_outer_classname = "CryptoServiceProto";
+option java_package = "com.google.cmrt.sdk.crypto_service.v1";
+
+import "cc/public/cpio/proto/public_key_service/v1/public_key_service.proto";
+import "cc/public/cpio/proto/private_key_service/v1/private_key_service.proto";
+import "cc/core/common/proto/common.proto";
+
+// For faster allocations of sub-messages.
+option cc_enable_arenas = true;
+
+// Provides encryption and decryption functionalities from Tink.
+service CryptoService {
+  // Encrypts payload using Hpke.
+  rpc HpkeEncrypt(HpkeEncryptRequest) returns (HpkeEncryptResponse) {}
+  // Decrypts payload using Hpke.
+  rpc HpkeDecrypt(HpkeDecryptRequest) returns (HpkeDecryptResponse) {}
+  // Encrypts payload using Aead.
+  rpc AeadEncrypt(AeadEncryptRequest) returns (AeadEncryptResponse) {}
+  // Decrypts payload using Aead.
+  rpc AeadDecrypt(AeadDecryptRequest) returns (AeadDecryptResponse) {}
+}
+
+// Hpke Kem config.
+enum HpkeKem {
+  KEM_UNKNOWN = 0;
+  DHKEM_X25519_HKDF_SHA256 = 1;
+  DHKEM_P256_HKDF_SHA256 = 2;
+}
+
+// Hpke Kdf config.
+enum HpkeKdf {
+  KDF_UNKNOWN = 0;
+  HKDF_SHA256 = 1;
+}
+
+// Hpke Aead config.
+enum HpkeAead {
+  AEAD_UNKNOWN = 0;
+  AES_128_GCM = 1;
+  AES_256_GCM = 2;
+  CHACHA20_POLY1305 = 3;
+}
+
+// Mapped from tink HashType proto.
+enum HashType {
+  UNKNOWN_HASH = 0;
+  SHA1 = 1;
+  SHA384 = 2;
+  SHA256 = 3;
+  SHA512 = 4;
+  SHA224 = 5;
+}
+
+// Wrap all Hpke Kem parameters.
+message HpkeParams {
+  HpkeKem kem = 1;
+  HpkeKdf kdf = 2;
+  HpkeAead aead = 3;
+}
+
+// AesGcmHkdfStreamingKey with two forms.
+message AesGcmHkdfStreamingKey {
+  oneof key {
+    // It is the base64 encoded binary form
+    // of google::crypto::tink::Keyset for google::crypto::tink::AesGcmHkdfStreamingKey.
+    bytes tink_key_binary = 1;
+    AesGcmHkdfStreamingRawKeyWithParams raw_key_with_params = 2;
+  }
+}
+
+// Mapped from tink AesGcmHkdfStreamingKey proto.
+message AesGcmHkdfStreamingRawKeyWithParams {
+  uint32 version = 1; // version of the key
+  AesGcmHkdfStreamingParams params = 2;
+  // The main key, aka. "ikm", input key material and encoded by base64.
+  // AES128_GCM_HKDF_1MB is recommended for the key type.
+  bytes key_value = 3;
+}
+
+// Mapped from tink AesGcmHkdfStreamingParams proto.
+message AesGcmHkdfStreamingParams {
+  uint32 ciphertext_segment_size = 1; // segment size for streaming encryption/decryption
+  uint32 derived_key_size = 2;  // size of AES-GCM keys derived for each segment
+  HashType hkdf_hash_type = 3;  // Hash type for hkdf encrypt/decrypt
+}
+
+// AesCtrHmacStreamingKey with two forms.
+message AesCtrHmacStreamingKey {
+  oneof key {
+    // It is the base64 encoded binary form
+    // of google::crypto::tink::Keyset for google::crypto::tink::AesCtrHmacStreamingKey.
+    bytes tink_key_binary = 1;
+    AesCtrHmacStreamingRawKeyWithParams raw_key_with_params = 2;
+  }
+}
+
+// Mapped from tink AesCtrHmacStreamingKey proto.
+message AesCtrHmacStreamingRawKeyWithParams {
+  uint32 version = 1; // version of the key
+  AesCtrHmacStreamingParams params = 2;
+  // The main key, aka. "ikm", input key material and encoded by base64.
+  // AES128_GCM_HKDF_1MB is recommended for the key type.
+  bytes key_value = 3;
+}
+
+// Mapped from tink AesCtrHmacStreamingParams proto.
+message AesCtrHmacStreamingParams {
+  uint32 ciphertext_segment_size = 1; // segment size for streaming encryption/decryption
+  uint32 derived_key_size = 2;  // size of AES-CTR keys derived for each segment
+  HashType hkdf_hash_type = 3;  // hash function for key derivation via HKDF
+  HmacParams hmac_params = 4;   // params for authentication tags
+}
+
+//  Mapped from tink HmacParams proto.
+message HmacParams {
+  HashType hash = 1;  // hash type for hmac
+  uint32 tag_size = 2; // size of tag in hmac
+}
+
+// The length of exposed secret.
+enum SecretLength {
+  SECRET_LENGTH_UNKNOWN = 0;
+  SECRET_LENGTH_16_BYTES = 1;
+  SECRET_LENGTH_32_BYTES = 2;
+}
+
+// The raw key with params.
+message RawKeyWithParams {
+    // It is based64 encoded raw key.
+    bytes raw_key = 1;
+    // Reqired. HPKE parameters.
+    HpkeParams hpke_params = 2;
+}
+
+// All data needed for HpkeEncrypt.
+message HpkeEncryptRequest {
+  // The key_id is required when is_bidirectional is true.
+  string key_id = 1;
+  // Public key to encrypt the payload.
+  oneof public_key {
+    // The raw key with params.
+    RawKeyWithParams raw_key_with_params = 8;
+    // It is the base64 encoded binary form
+    // of google::crypto::tink::Keyset for google::crypto::tink::HpkePublicKey.
+    bytes tink_key_binary = 9;
+  }
+  // Data to be encrypted.
+  bytes payload = 2;
+  // App generated associated data.
+  string shared_info = 3;
+  // Enables bidirectional encryption if true.
+  bool is_bidirectional = 5;
+  // Only to be used when is_bidirectional is true. The same HPKE context will
+  // export the same secret when the exporter_context and secret_length are the
+  // same. Make sure the exporter_context and secret_length match in HpkeEncrypt
+  // and HpkeDecrypt to get the same secret. If not set, "aead key" will be used
+  // by default.
+  string exporter_context = 6;
+  // Only to be used when is_bidirectional is true. If not set,
+  // SECRET_LENGTH_16_BYTES will be used be default.
+  SecretLength secret_length = 7;
+}
+
+// Encrypted data for HPKE. Do not put data which should not be sent over wire
+// here.
+message HpkeEncryptedData {
+  // Contains encapsulated key and the actual payload.
+  bytes ciphertext = 1;
+  // The identifier of a pair of public key and private key.
+  // It is available when is_bidirectional is true.
+  string key_id = 2;
+}
+
+// Result from HpkeEcrypt.
+message HpkeEncryptResponse {
+  // The execution result.
+  scp.core.common.proto.ExecutionResult result = 1;
+  // Encrypted data.
+  HpkeEncryptedData encrypted_data = 2;
+  // Only be present in bi-directional encryption to decrypt the response. Don't
+  // send it over wire.
+  bytes secret = 3;
+}
+
+// All data needed for HpkeDecrypt.
+message HpkeDecryptRequest {
+  oneof private_key {
+    // The raw key with params.
+    RawKeyWithParams raw_key_with_params = 8;
+    // It is the base64 encoded binary form
+    // of google::crypto::tink::Keyset for google::crypto::tink::HpkePrivateKey.
+    bytes tink_key_binary = 1;
+  }
+  // Encrypted data.
+  // The key_id inside encrypted_data is not needed.
+  HpkeEncryptedData encrypted_data = 2;
+  // Optional. App generated associated data.
+  // Make sure it matches the one for encrypt.
+  string shared_info = 3;
+  // Enables bidirectional encryption if true.
+  bool is_bidirectional = 5;
+  // Only to be used when is_bidirectional is true. The same HPKE context will
+  // export the same secret when the exporter_context and secret_length are the
+  // same. Make sure the exporter_context and secret_length match in HpkeEncrypt
+  // and HpkeDecrypt to get the same secret. If not set, "aead key" will be used
+  // by default.
+  string exporter_context = 6;
+  // Only to be used when is_bidirectional is true. If not set,
+  // SECRET_LENGTH_16_BYTES will be used be default.
+  SecretLength secret_length = 7;
+}
+
+// Result from HpkeDecrypt.
+message HpkeDecryptResponse {
+  // The execution result.
+  scp.core.common.proto.ExecutionResult result = 1;
+  // Decrypted payload.
+  bytes payload = 2;
+  // Only be present in bi-directional encryption to encrypt the response. Don't
+  // send it over wire.
+  bytes secret = 3;
+}
+
+// All data needed for AeadEncrypt.
+message AeadEncryptRequest {
+  // Data to be encrypted.
+  bytes payload = 1;
+  // Secret to generate Aead.
+  bytes secret = 2;
+  // App generated associated data.
+  string shared_info = 3;
+}
+
+// Encrypted data for Aead. Do not put data which should not be sent over wire
+// here.
+message AeadEncryptedData {
+  // Encryped payload.
+  bytes ciphertext = 1;
+}
+
+// Result from AeadEncrypt.
+message AeadEncryptResponse {
+  // The execution result.
+  scp.core.common.proto.ExecutionResult result = 1;
+  // Encrypted data.
+  AeadEncryptedData encrypted_data = 2;
+}
+
+// All data needed for AeadDecrypt.
+message AeadDecryptRequest {
+  // Encrypted data.
+  AeadEncryptedData encrypted_data = 1;
+  // Secret to generate Aead.
+  bytes secret = 2;
+  // App generated associated data.
+  string shared_info = 3;
+}
+
+// Result from AeadDecrypt.
+message AeadDecryptResponse {
+  // The execution result.
+  scp.core.common.proto.ExecutionResult result = 1;
+  // Decypted payload.
+  bytes payload = 2;
+}
+
+// Compute Message Authentication Code Request
+message ComputeMacRequest {
+  // MAC will be computed on this data
+  bytes data = 1;
+  // Key will be used to authenticate the MAC algorithm.
+  // It should be the base64 encoded binary form of 
+  // google::crypto::tink::Keyset for google::crypto::tink::HmacKey
+  bytes key = 2;
+}
+
+// Compute Message Authentication Code Response
+message ComputeMacResponse {
+  scp.core.common.proto.ExecutionResult result = 1;
+  // The result MAC
+  bytes mac = 2;
+}
+
+message StreamingAeadParams {
+  oneof key {
+    AesCtrHmacStreamingKey aes_ctr_hmac_key = 1;
+    AesGcmHkdfStreamingKey aes_gcm_hkdf_key = 2;
+  }
+  string shared_info = 3;
+}

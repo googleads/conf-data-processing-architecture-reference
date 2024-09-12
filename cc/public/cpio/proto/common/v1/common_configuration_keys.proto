@@ -1,0 +1,47 @@
+// Copyright 2022 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package google.cmrt.sdk.common.v1;
+
+option java_multiple_files = true;
+option java_outer_classname = "CommonConfigurationKeysProto";
+option java_package = "com.google.cmrt.sdk.common.v1";
+
+// For faster allocations of sub-messages.
+option cc_enable_arenas = true;
+
+// Configuratiion keys for client level.
+enum CommonClientConfigurationKeys {
+  // Invalid key.
+  UNKNOWN_COMMON_CLIENT_CONFIGURATION_KEY = 0;
+  // Optional. All options are listed in kLogOptionConfigMap in
+  // [cc/cpio/server/interface/configuration_keys.h].
+  // If not set, use the default value SysLog.
+  CMRT_COMMON_LOG_OPTION = 1;
+  // Optional. If not set, use the default value 2.
+  CMRT_COMMON_CPU_THREAD_COUNT = 2;
+  // Optional. If not set, use the default value 100000.
+  CMRT_COMMON_CPU_THREAD_POOL_QUEUE_CAP = 3;
+  // Optional. If not set, use the default value 2.
+  CMRT_COMMON_IO_THREAD_COUNT = 4;
+  // Optional. If not set, use the default value 100000.
+  CMRT_COMMON_IO_THREAD_POOL_QUEUE_CAP = 5;
+  // Optional. All options are listed in kLogLevelConfigMap in
+  // [cc/cpio/server/interface/configuration_keys.h]. Specify the log levels in
+  // a string separated by ",". If not set, the default configuration will
+  // exclude debug and info logs.
+  CMRT_COMMON_ENABLED_LOG_LEVELS = 6;
+}

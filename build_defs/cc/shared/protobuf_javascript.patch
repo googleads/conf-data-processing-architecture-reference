@@ -1,0 +1,610 @@
+diff --git a/generator/BUILD.bazel b/generator/BUILD.bazel
+index b865ca4..20ff6ec 100644
+--- a/generator/BUILD.bazel
++++ b/generator/BUILD.bazel
+@@ -1,5 +1,5 @@
+-cc_binary(
+-    name = "protoc-gen-js",
++cc_library(
++    name = "protoc-gen-js-lib",
+     srcs = [
+         "js_generator.cc",
+         "js_generator.h",
+@@ -9,6 +9,10 @@ cc_binary(
+     ],
+     visibility = ["//visibility:public"],
+     deps = [
++        "@com_google_absl//absl/log:absl_check",
++        "@com_google_absl//absl/log:absl_log",
++        "@com_google_absl//absl/strings",
++        "@com_google_absl//absl/strings:str_format",
+         "@com_google_protobuf//:protobuf",
+         "@com_google_protobuf//:protoc_lib",
+     ],
+diff --git a/generator/js_generator.cc b/generator/js_generator.cc
+index 97b5844..e878330 100644
+--- a/generator/js_generator.cc
++++ b/generator/js_generator.cc
+@@ -36,11 +36,17 @@
+ #include <google/protobuf/io/printer.h>
+ #include <google/protobuf/io/zero_copy_stream.h>
+ #include <google/protobuf/stubs/common.h>
+-#include <google/protobuf/stubs/logging.h>
+-#include <google/protobuf/stubs/stringprintf.h>
+-#include <google/protobuf/stubs/strutil.h>
++#include "absl/log/absl_check.h"
++#include "absl/log/absl_log.h"
++#include "absl/strings/escaping.h"
++#include "absl/strings/numbers.h"
++#include "absl/strings/strip.h"
++#include "absl/strings/str_cat.h"
++#include "absl/strings/str_join.h"
++#include "absl/strings/str_format.h"
+ 
+ #include <algorithm>
++#include <float.h>    // FLT_DIG and DBL_DIG
+ #include <limits>
+ #include <map>
+ #include <memory>
+@@ -75,6 +81,186 @@ const char* kKeyword[] = {
+ static const int kNumKeyword = sizeof(kKeyword) / sizeof(char*);
+ 
+ namespace {
++// ----------------------------------------------------------------------
++// HasPrefixString()
++//    Check if a string begins with a given prefix.
++// StripPrefixString()
++//    Given a string and a putative prefix, returns the string minus the
++//    prefix string if the prefix matches, otherwise the original
++//    string.
++// ----------------------------------------------------------------------
++inline bool HasPrefixString(const std::string& str, const std::string& prefix) {
++  return str.size() >= prefix.size() &&
++         str.compare(0, prefix.size(), prefix) == 0;
++}
++
++inline std::string StripPrefixString(const std::string& str,
++                                     const std::string& prefix) {
++  if (HasPrefixString(str, prefix)) {
++    return str.substr(prefix.size());
++  } else {
++    return str;
++  }
++}
++
++constexpr int kFloatToBufferSize = 24;
++constexpr int kDoubleToBufferSize = 32;
++
++inline bool IsNaN(double value) {
++  // NaN is never equal to anything, even itself.
++  return value != value;
++}
++
++inline bool IsValidFloatChar(char c) {
++  return ('0' <= c && c <= '9') ||
++         c == 'e' || c == 'E' ||
++         c == '+' || c == '-';
++}
++
++void DelocalizeRadix(char* buffer) {
++  // Fast check:  if the buffer has a normal decimal point, assume no
++  // translation is needed.
++  if (strchr(buffer, '.') != NULL) return;
++
++  // Find the first unknown character.
++  while (IsValidFloatChar(*buffer)) ++buffer;
++
++  if (*buffer == '\0') {
++    // No radix character found.
++    return;
++  }
++
++  // We are now pointing at the locale-specific radix character.  Replace it
++  // with '.'.
++  *buffer = '.';
++  ++buffer;
++
++  if (!IsValidFloatChar(*buffer) && *buffer != '\0') {
++    // It appears the radix was a multi-byte character.  We need to remove the
++    // extra bytes.
++    char* target = buffer;
++    do { ++buffer; } while (!IsValidFloatChar(*buffer) && *buffer != '\0');
++    memmove(target, buffer, strlen(buffer) + 1);
++  }
++}
++
++bool safe_strtof(const char* str, float* value) {
++  char* endptr;
++  errno = 0;  // errno only gets set on errors
++#if defined(_WIN32) || defined (__hpux)  // has no strtof()
++  *value = strtod(str, &endptr);
++#else
++  *value = strtof(str, &endptr);
++#endif
++  return *str != 0 && *endptr == 0 && errno == 0;
++}
++
++char* FloatToBuffer(float value, char* buffer) {
++  // FLT_DIG is 6 for IEEE-754 floats, which are used on almost all
++  // platforms these days.  Just in case some system exists where FLT_DIG
++  // is significantly larger -- and risks overflowing our buffer -- we have
++  // this assert.
++  GOOGLE_COMPILE_ASSERT(FLT_DIG < 10, FLT_DIG_is_too_big);
++
++  if (value == std::numeric_limits<double>::infinity()) {
++    strcpy(buffer, "inf");
++    return buffer;
++  } else if (value == -std::numeric_limits<double>::infinity()) {
++    strcpy(buffer, "-inf");
++    return buffer;
++  } else if (IsNaN(value)) {
++    strcpy(buffer, "nan");
++    return buffer;
++  }
++
++  int snprintf_result =
++    snprintf(buffer, kFloatToBufferSize, "%.*g", FLT_DIG, value);
++
++  // The snprintf should never overflow because the buffer is significantly
++  // larger than the precision we asked for.
++  ABSL_DCHECK(snprintf_result > 0 && snprintf_result < kFloatToBufferSize);
++
++  float parsed_value;
++  if (!safe_strtof(buffer, &parsed_value) || parsed_value != value) {
++    int snprintf_result =
++      snprintf(buffer, kFloatToBufferSize, "%.*g", FLT_DIG+2, value);
++
++    // Should never overflow; see above.
++    ABSL_DCHECK(snprintf_result > 0 && snprintf_result < kFloatToBufferSize);
++  }
++
++  DelocalizeRadix(buffer);
++  return buffer;
++}
++
++std::string SimpleFtoa(float value) {
++  char buffer[kFloatToBufferSize];
++  return FloatToBuffer(value, buffer);
++}
++
++char* DoubleToBuffer(double value, char* buffer) {
++  // DBL_DIG is 15 for IEEE-754 doubles, which are used on almost all
++  // platforms these days.  Just in case some system exists where DBL_DIG
++  // is significantly larger -- and risks overflowing our buffer -- we have
++  // this assert.
++  GOOGLE_COMPILE_ASSERT(DBL_DIG < 20, DBL_DIG_is_too_big);
++
++  if (value == std::numeric_limits<double>::infinity()) {
++    strcpy(buffer, "inf");
++    return buffer;
++  } else if (value == -std::numeric_limits<double>::infinity()) {
++    strcpy(buffer, "-inf");
++    return buffer;
++  } else if (IsNaN(value)) {
++    strcpy(buffer, "nan");
++    return buffer;
++  }
++
++  int snprintf_result =
++    snprintf(buffer, kDoubleToBufferSize, "%.*g", DBL_DIG, value);
++
++  // The snprintf should never overflow because the buffer is significantly
++  // larger than the precision we asked for.
++  ABSL_DCHECK(snprintf_result > 0 && snprintf_result < kDoubleToBufferSize);
++
++  // We need to make parsed_value volatile in order to force the compiler to
++  // write it out to the stack.  Otherwise, it may keep the value in a
++  // register, and if it does that, it may keep it as a long double instead
++  // of a double.  This long double may have extra bits that make it compare
++  // unequal to "value" even though it would be exactly equal if it were
++  // truncated to a double.
++  volatile double parsed_value = strtod(buffer, NULL);
++  if (parsed_value != value) {
++    int snprintf_result =
++      snprintf(buffer, kDoubleToBufferSize, "%.*g", DBL_DIG+2, value);
++
++    // Should never overflow; see above.
++    ABSL_DCHECK(snprintf_result > 0 && snprintf_result < kDoubleToBufferSize);
++  }
++
++  DelocalizeRadix(buffer);
++  return buffer;
++}
++
++std::string SimpleDtoa(double value) {
++  char buffer[kDoubleToBufferSize];
++  return DoubleToBuffer(value, buffer);
++}
++
++// ----------------------------------------------------------------------
++// ReplaceCharacters
++//    Replaces any occurrence of the character 'remove' (or the characters
++//    in 'remove') with the character 'replacewith'.
++// ----------------------------------------------------------------------
++void ReplaceCharacters(std::string *s, const char *remove, char replacewith) {
++  const char *str_start = s->c_str();
++  const char *str = str_start;
++  for (str = strpbrk(str, remove);
++       str != nullptr;
++       str = strpbrk(str + 1, remove)) {
++    (*s)[str - str_start] = replacewith;
++  }
++}
+ 
+ // The mode of operation for bytes fields. Historically JSPB always carried
+ // bytes as JS {string}, containing base64 content by convention. With binary
+@@ -239,7 +425,7 @@ std::string MaybeCrossFileRef(const GeneratorOptions& options,
+ 
+ std::string SubmessageTypeRef(const GeneratorOptions& options,
+                               const FieldDescriptor* field) {
+-  GOOGLE_CHECK(field->cpp_type() == FieldDescriptor::CPPTYPE_MESSAGE);
++  ABSL_CHECK(field->cpp_type() == FieldDescriptor::CPPTYPE_MESSAGE);
+   return MaybeCrossFileRef(options, field->file(), field->message_type());
+ }
+ 
+@@ -406,7 +592,7 @@ std::string GetMessagesFileName(const GeneratorOptions& options, const SCC* scc,
+       std::string snake_name = StripProto(
+           GetSnakeFilename(scc->GetRepresentative()->file()->name()));
+       (*long_name_dict)[scc->GetRepresentative()] =
+-          StrCat(snake_name, "_long_sccs_",
++          absl::StrCat(snake_name, "_long_sccs_",
+                  static_cast<uint64_t>((*long_name_dict).size()));
+     }
+     filename_base = (*long_name_dict)[scc->GetRepresentative()];
+@@ -548,11 +734,11 @@ std::string JSFieldIndex(const FieldDescriptor* field) {
+     for (int i = 0; i < parent_type->field_count(); i++) {
+       if (parent_type->field(i)->type() == FieldDescriptor::TYPE_GROUP &&
+           parent_type->field(i)->message_type() == containing_type) {
+-        return StrCat(field->number() - parent_type->field(i)->number());
++        return absl::StrCat(field->number() - parent_type->field(i)->number());
+       }
+     }
+   }
+-  return StrCat(field->number());
++  return absl::StrCat(field->number());
+ }
+ 
+ std::string JSOneofIndex(const OneofDescriptor* oneof) {
+@@ -572,7 +758,7 @@ std::string JSOneofIndex(const OneofDescriptor* oneof) {
+       break;
+     }
+   }
+-  return StrCat(index);
++  return absl::StrCat(index);
+ }
+ 
+ // Decodes a codepoint in \x0000 -- \xFFFF.
+@@ -680,9 +866,9 @@ bool EscapeJSString(const std::string& in, std::string* out) {
+         if (codepoint >= 0x20 && codepoint <= 0x7e) {
+           *out += static_cast<char>(codepoint);
+         } else if (codepoint >= 0x100) {
+-          *out += StringPrintf("\\u%04x", codepoint);
++          *out += absl::StrFormat("\\u%04x", codepoint);
+         } else {
+-          *out += StringPrintf("\\x%02x", codepoint);
++          *out += absl::StrFormat("\\x%02x", codepoint);
+         }
+         break;
+     }
+@@ -809,21 +995,21 @@ std::string JSFieldDefault(const FieldDescriptor* field) {
+ 
+   switch (field->cpp_type()) {
+     case FieldDescriptor::CPPTYPE_INT32:
+-      return MaybeNumberString(field, StrCat(field->default_value_int32()));
++      return MaybeNumberString(field, absl::StrCat(field->default_value_int32()));
+     case FieldDescriptor::CPPTYPE_UINT32:
+       // The original codegen is in Java, and Java protobufs store unsigned
+       // integer values as signed integer values. In order to exactly match the
+       // output, we need to reinterpret as base-2 signed. Ugh.
+       return MaybeNumberString(
+-          field, StrCat(static_cast<int32_t>(field->default_value_uint32())));
++          field, absl::StrCat(static_cast<int32_t>(field->default_value_uint32())));
+     case FieldDescriptor::CPPTYPE_INT64:
+-      return MaybeNumberString(field, StrCat(field->default_value_int64()));
++      return MaybeNumberString(field, absl::StrCat(field->default_value_int64()));
+     case FieldDescriptor::CPPTYPE_UINT64:
+       // See above note for uint32 -- reinterpreting as signed.
+       return MaybeNumberString(
+-          field, StrCat(static_cast<int64_t>(field->default_value_uint64())));
++          field, absl::StrCat(static_cast<int64_t>(field->default_value_uint64())));
+     case FieldDescriptor::CPPTYPE_ENUM:
+-      return StrCat(field->default_value_enum()->number());
++      return absl::StrCat(field->default_value_enum()->number());
+     case FieldDescriptor::CPPTYPE_BOOL:
+       return field->default_value_bool() ? "true" : "false";
+     case FieldDescriptor::CPPTYPE_FLOAT:
+@@ -836,7 +1022,7 @@ std::string JSFieldDefault(const FieldDescriptor* field) {
+         bool is_valid = EscapeJSString(field->default_value_string(), &out);
+         if (!is_valid) {
+           // TODO(b/115551870): Decide whether this should be a hard error.
+-          GOOGLE_LOG(WARNING)
++          ABSL_LOG(WARNING)
+               << "The default value for field " << field->full_name()
+               << " was truncated since it contained invalid UTF-8 or"
+                  " codepoints outside the basic multilingual plane.";
+@@ -848,7 +1034,7 @@ std::string JSFieldDefault(const FieldDescriptor* field) {
+     case FieldDescriptor::CPPTYPE_MESSAGE:
+       return "null";
+   }
+-  GOOGLE_LOG(FATAL) << "Shouldn't reach here.";
++  ABSL_LOG(FATAL) << "Shouldn't reach here.";
+   return "";
+ }
+ 
+@@ -980,8 +1166,7 @@ bool DeclaredReturnTypeIsNullable(const GeneratorOptions& options,
+     return false;
+   }
+ 
+-  if (field->file()->syntax() == FileDescriptor::SYNTAX_PROTO3 &&
+-      field->cpp_type() != FieldDescriptor::CPPTYPE_MESSAGE) {
++  if (field->cpp_type() != FieldDescriptor::CPPTYPE_MESSAGE) {
+     return false;
+   }
+ 
+@@ -1181,7 +1366,7 @@ std::string RepeatedFieldNumberList(const GeneratorOptions& options,
+       numbers.push_back(JSFieldIndex(desc->field(i)));
+     }
+   }
+-  return "[" + Join(numbers, ",") + "]";
++  return "[" + absl::StrJoin(numbers, ",") + "]";
+ }
+ 
+ std::string OneofGroupList(const Descriptor* desc) {
+@@ -1200,9 +1385,9 @@ std::string OneofGroupList(const Descriptor* desc) {
+       }
+       oneof_fields.push_back(JSFieldIndex(oneof->field(j)));
+     }
+-    oneof_entries.push_back("[" + Join(oneof_fields, ",") + "]");
++    oneof_entries.push_back("[" + absl::StrJoin(oneof_fields, ",") + "]");
+   }
+-  return "[" + Join(oneof_entries, ",") + "]";
++  return "[" + absl::StrJoin(oneof_entries, ",") + "]";
+ }
+ 
+ std::string JSOneofArray(const GeneratorOptions& options,
+@@ -1275,7 +1460,7 @@ std::string FieldDefinition(const GeneratorOptions& options,
+     } else {
+       value_type = ProtoTypeName(options, value_field);
+     }
+-    return StringPrintf("map<%s, %s> %s = %d;", key_type.c_str(),
++    return absl::StrFormat("map<%s, %s> %s = %d;", key_type.c_str(),
+                         value_type.c_str(), field->name().c_str(),
+                         field->number());
+   } else {
+@@ -1294,7 +1479,7 @@ std::string FieldDefinition(const GeneratorOptions& options,
+       type = ProtoTypeName(options, field);
+       name = field->name();
+     }
+-    return StringPrintf("%s %s %s = %d;", qualifier.c_str(), type.c_str(),
++    return absl::StrFormat("%s %s %s = %d;", qualifier.c_str(), type.c_str(),
+                         name.c_str(), field->number());
+   }
+ }
+@@ -1388,7 +1573,7 @@ std::string GetPivot(const Descriptor* desc) {
+                                                      : kDefaultPivot;
+   }
+ 
+-  return StrCat(pivot);
++  return absl::StrCat(pivot);
+ }
+ 
+ // Whether this field represents presence.  For fields with presence, we
+@@ -1591,7 +1776,7 @@ void EmbedCodeAnnotations(const GeneratedCodeInfo& annotations,
+   std::string meta_content;
+   annotations.SerializeToString(&meta_content);
+   std::string meta_64;
+-  Base64Escape(meta_content, &meta_64);
++  absl::Base64Escape(meta_content, &meta_64);
+ 
+   // Print base64 encoded annotations at the end of output file in
+   // a comment.
+@@ -1739,7 +1924,7 @@ void Generator::GenerateProvides(const GeneratorOptions& options,
+       if (options.import_style == GeneratorOptions::kImportCommonJsStrict) {
+         std::string namespaceObject = *it;
+         // Remove "proto." from the namespace object
+-        GOOGLE_CHECK_EQ(0, namespaceObject.compare(0, 6, "proto."));
++        ABSL_CHECK_EQ(0, namespaceObject.compare(0, 6, "proto."));
+         namespaceObject.erase(0, 6);
+         printer->Print("goog.exportSymbol('$name$', null, proto);\n", "name",
+                        namespaceObject);
+@@ -1778,7 +1963,7 @@ void Generator::GenerateRequiresForLibrary(
+     const GeneratorOptions& options, io::Printer* printer,
+     const std::vector<const FileDescriptor*>& files,
+     std::set<std::string>* provided) const {
+-  GOOGLE_CHECK_EQ(options.import_style, GeneratorOptions::kImportClosure);
++  ABSL_CHECK_EQ(options.import_style, GeneratorOptions::kImportClosure);
+   // For Closure imports we need to import every message type individually.
+   std::set<std::string> required;
+   std::set<std::string> forwards;
+@@ -2265,7 +2450,7 @@ void Generator::GenerateFieldValueExpression(io::Printer* printer,
+ 
+   const std::string with_default = use_default ? "WithDefault" : "";
+   const std::string default_arg =
+-      use_default ? StrCat(", ", JSFieldDefault(field)) : "";
++      use_default ? absl::StrCat(", ", JSFieldDefault(field)) : "";
+   const std::string cardinality = field->is_repeated() ? "Repeated" : "";
+   std::string type = "";
+   if (is_float_or_double) {
+@@ -2347,7 +2532,7 @@ void Generator::GenerateClassFieldToObject(const GeneratorOptions& options,
+   } else {
+     bool use_default = field->has_default_value();
+ 
+-    if (field->file()->syntax() == FileDescriptor::SYNTAX_PROTO3 &&
++    if (
+         // Repeated fields get initialized to their default in the constructor
+         // (why?), so we emit a plain getField() call for them.
+         !field->is_repeated()) {
+@@ -2755,8 +2940,7 @@ void Generator::GenerateClassField(const GeneratorOptions& options,
+                                         /* force_present = */ false,
+                                         /* singular_if_not_packed = */ false));
+ 
+-    if (field->file()->syntax() == FileDescriptor::SYNTAX_PROTO3 &&
+-        !field->is_repeated() && !field->is_map() &&
++    if (!field->is_repeated() && !field->is_map() &&
+         !HasFieldPresence(options, field)) {
+       // Proto3 non-repeated and non-map fields without presence use the
+       // setProto3*Field function.
+@@ -3083,7 +3267,7 @@ void Generator::GenerateClassDeserializeBinary(const GeneratorOptions& options,
+ void Generator::GenerateClassDeserializeBinaryField(
+     const GeneratorOptions& options, io::Printer* printer,
+     const FieldDescriptor* field) const {
+-  printer->Print("    case $num$:\n", "num", StrCat(field->number()));
++  printer->Print("    case $num$:\n", "num", absl::StrCat(field->number()));
+ 
+   if (field->is_map()) {
+     const FieldDescriptor* key_field = MapFieldKey(field);
+@@ -3126,7 +3310,7 @@ void Generator::GenerateClassDeserializeBinaryField(
+           (field->type() == FieldDescriptor::TYPE_GROUP) ? "Group" : "Message",
+           "grpfield",
+           (field->type() == FieldDescriptor::TYPE_GROUP)
+-              ? (StrCat(field->number()) + ", ")
++              ? (absl::StrCat(field->number()) + ", ")
+               : "");
+     } else if (field->is_packable()) {
+       printer->Print(
+@@ -3296,7 +3480,7 @@ void Generator::GenerateClassSerializeBinaryField(
+     printer->Print(
+         "    f.serializeBinary($index$, writer, "
+         "$keyWriterFn$, $valueWriterFn$",
+-        "index", StrCat(field->number()), "keyWriterFn",
++        "index", absl::StrCat(field->number()), "keyWriterFn",
+         JSBinaryWriterMethodName(options, key_field), "valueWriterFn",
+         JSBinaryWriterMethodName(options, value_field));
+ 
+@@ -3312,7 +3496,7 @@ void Generator::GenerateClassSerializeBinaryField(
+         "      $index$,\n"
+         "      f",
+         "method", JSBinaryReadWriteMethodName(field, /* is_writer = */ true),
+-        "index", StrCat(field->number()));
++        "index", absl::StrCat(field->number()));
+ 
+     if (field->cpp_type() == FieldDescriptor::CPPTYPE_MESSAGE &&
+         !field->is_map()) {
+@@ -3355,7 +3539,7 @@ void Generator::GenerateEnum(const GeneratorOptions& options,
+   for (auto i : valid_index) {
+     const EnumValueDescriptor* value = enumdesc->value(i);
+     printer->Print("  $name$: $value$$comma$\n", "name",
+-                   ToEnumCase(value->name()), "value", StrCat(value->number()),
++                   ToEnumCase(value->name()), "value", absl::StrCat(value->number()),
+                    "comma", (i == valid_index.back()) ? "" : ",");
+     printer->Annotate("name", value);
+   }
+@@ -3397,7 +3581,7 @@ void Generator::GenerateExtension(const GeneratorOptions& options,
+       "!Object} */ (\n"
+       "         $toObject$),\n"
+       "    $repeated$);\n",
+-      "index", StrCat(field->number()), "name", extension_object_name, "ctor",
++      "index", absl::StrCat(field->number()), "name", extension_object_name, "ctor",
+       (field->cpp_type() == FieldDescriptor::CPPTYPE_MESSAGE
+            ? SubmessageTypeRef(options, field)
+            : std::string("null")),
+@@ -3417,7 +3601,7 @@ void Generator::GenerateExtension(const GeneratorOptions& options,
+       "    $binaryMessageDeserializeFn$,\n",
+       "extendName",
+       JSExtensionsObjectName(options, field->file(), field->containing_type()),
+-      "index", StrCat(field->number()), "class", extension_scope, "name",
++      "index", absl::StrCat(field->number()), "class", extension_scope, "name",
+       extension_object_name, "binaryReaderFn",
+       JSBinaryReaderMethodName(options, field), "binaryWriterFn",
+       JSBinaryWriterMethodName(options, field), "binaryMessageSerializeFn",
+@@ -3439,7 +3623,7 @@ void Generator::GenerateExtension(const GeneratorOptions& options,
+       "\n",
+       "extendName",
+       JSExtensionsObjectName(options, field->file(), field->containing_type()),
+-      "index", StrCat(field->number()), "class", extension_scope, "name",
++      "index", absl::StrCat(field->number()), "class", extension_scope, "name",
+       extension_object_name);
+ }
+ 
+@@ -3467,7 +3651,7 @@ bool GeneratorOptions::ParseFromOptions(
+       testonly = true;
+ 
+     } else if (options[i].first == "error_on_name_conflict") {
+-      GOOGLE_LOG(WARNING) << "Ignoring error_on_name_conflict option, this "
++      ABSL_LOG(WARNING) << "Ignoring error_on_name_conflict option, this "
+                              "will be removed in a future release";
+     } else if (options[i].first == "output_dir") {
+       output_dir = options[i].second;
+@@ -3591,7 +3775,7 @@ bool Generator::GenerateFile(const FileDescriptor* file,
+                                  ? file->name().substr(file->name().rfind('/'))
+                                  : file->name());
+   std::unique_ptr<io::ZeroCopyOutputStream> output(context->Open(filename));
+-  GOOGLE_CHECK(output);
++  ABSL_CHECK(output);
+   GeneratedCodeInfo annotations;
+   io::AnnotationProtoCollector<GeneratedCodeInfo> annotation_collector(
+       &annotations);
+@@ -3725,7 +3909,7 @@ bool Generator::GenerateAll(const std::vector<const FileDescriptor*>& files,
+     std::string filename = options.output_dir + "/" + options.library +
+                            options.GetFileNameExtension();
+     std::unique_ptr<io::ZeroCopyOutputStream> output(context->Open(filename));
+-    GOOGLE_CHECK(output.get());
++    ABSL_CHECK(output.get());
+     GeneratedCodeInfo annotations;
+     io::AnnotationProtoCollector<GeneratedCodeInfo> annotation_collector(
+         &annotations);
+@@ -3801,7 +3985,7 @@ bool Generator::GenerateAll(const std::vector<const FileDescriptor*>& files,
+         const std::string& filename = allowed_map[scc];
+         std::unique_ptr<io::ZeroCopyOutputStream> output(
+             context->Open(filename));
+-        GOOGLE_CHECK(output.get());
++        ABSL_CHECK(output.get());
+         GeneratedCodeInfo annotations;
+         io::AnnotationProtoCollector<GeneratedCodeInfo> annotation_collector(
+             &annotations);
+@@ -3854,7 +4038,7 @@ bool Generator::GenerateAll(const std::vector<const FileDescriptor*>& files,
+         const std::string& filename = allowed_map[enumdesc];
+         std::unique_ptr<io::ZeroCopyOutputStream> output(
+             context->Open(filename));
+-        GOOGLE_CHECK(output.get());
++        ABSL_CHECK(output.get());
+         GeneratedCodeInfo annotations;
+         io::AnnotationProtoCollector<GeneratedCodeInfo> annotation_collector(
+             &annotations);
+@@ -3886,7 +4070,7 @@ bool Generator::GenerateAll(const std::vector<const FileDescriptor*>& files,
+ 
+         std::unique_ptr<io::ZeroCopyOutputStream> output(
+             context->Open(filename));
+-        GOOGLE_CHECK(output.get());
++        ABSL_CHECK(output.get());
+         GeneratedCodeInfo annotations;
+         io::AnnotationProtoCollector<GeneratedCodeInfo> annotation_collector(
+             &annotations);
+diff --git a/generator/js_generator.h b/generator/js_generator.h
+index c7a942a..9787bb5 100644
+--- a/generator/js_generator.h
++++ b/generator/js_generator.h
+@@ -36,7 +36,6 @@
+ #include <set>
+ #include <string>
+ 
+-#include <google/protobuf/stubs/logging.h>
+ #include <google/protobuf/stubs/common.h>
+ #include <google/protobuf/compiler/scc.h>
+ #include <google/protobuf/compiler/code_generator.h>
+@@ -46,6 +45,24 @@
+ namespace google {
+ namespace protobuf {
+ 
++#undef GOOGLE_DISALLOW_EVIL_CONSTRUCTORS
++#define GOOGLE_DISALLOW_EVIL_CONSTRUCTORS(TypeName)    \
++  TypeName(const TypeName&);                           \
++  void operator=(const TypeName&)
++          
++namespace internal {
++
++template <bool>
++struct CompileAssert {
++};
++
++}  // namespace internal
++
++#undef GOOGLE_COMPILE_ASSERT
++#define GOOGLE_COMPILE_ASSERT(expr, msg) \
++  typedef ::google::protobuf::internal::CompileAssert<(bool(expr))> \
++          msg[bool(expr) ? 1 : -1]
++          
+ class Descriptor;
+ class EnumDescriptor;
+ class FieldDescriptor;
+ 

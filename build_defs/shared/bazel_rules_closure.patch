@@ -1,0 +1,13 @@
+diff --git a/closure/protobuf/closure_js_proto_library.bzl b/closure/protobuf/closure_js_proto_library.bzl
+index ce62e63..ee81cb2 100644
+--- a/closure/protobuf/closure_js_proto_library.bzl
++++ b/closure/protobuf/closure_js_proto_library.bzl
+@@ -35,7 +35,7 @@ def closure_js_proto_library(
+         testonly = None,
+         binary = 1,
+         import_style = None,
+-        protocbin = Label("@com_google_protobuf//:protoc"),
++        protocbin = Label("@com_google_protobuf//:js_protoc"),
+         **kwargs):
+     cmd = ["$(location %s)" % protocbin]
+     js_out_options = ["library=%s" % name]
