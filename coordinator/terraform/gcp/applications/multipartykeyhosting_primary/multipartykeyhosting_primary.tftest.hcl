@@ -76,6 +76,8 @@ variables {
   parent_domain_name                             = "domain"
   parent_domain_name_project                     = "domain_project"
   service_subdomain_suffix                       = ""
+  key_generation_precheck_error_threshold        = 0
+  key_generation_precheck_alignment_period       = 1
 
   public_key_service_subdomain                                  = ""
   public_key_service_container_image_url                        = ""
@@ -161,6 +163,7 @@ variables {
   public_key_service_lb_outlier_detection_enforcing_consecutive_gateway_failure = 0
 
   public_key_service_cloud_armor_enabled                                = false
+  public_key_service_cloud_armor_enable_adaptive_protection             = false
   public_key_service_cloud_armor_preview_mode                           = true
   public_key_service_cloud_armor_rate_limit_count                       = 0
   public_key_service_cloud_armor_rate_limit_interval_sec                = 60

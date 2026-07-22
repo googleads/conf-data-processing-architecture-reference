@@ -104,10 +104,14 @@ cc_library(
 cc_library(
     name = "key_fetching",
     srcs = [
-        "wrapped_key_handler_with_cache.cc",
+        "aws_wrapped_key_handler_with_cache.cc",
+        "gcp_wrapped_key_handler_with_cache.cc",
+        "wrapped_key_handler_with_cache_base.cc",
     ],
     hdrs = [
-        "wrapped_key_handler_with_cache.h",
+        "aws_wrapped_key_handler_with_cache.h",
+        "gcp_wrapped_key_handler_with_cache.h",
+        "wrapped_key_handler_with_cache_base.h",
         "wrapped_key_handler_with_cache_interface.h",
     ],
     deps = [
@@ -116,6 +120,8 @@ cc_library(
         "//cc/core/common/auto_expiry_concurrent_map/src:auto_expiry_concurrent_map_lib",
         "//cc/core/common/global_logger/src:global_logger_lib",
         "//cc/core/common/time_provider/src:time_provider_lib",
+        "//cc/cpio/client_providers/kms_client_provider/src/aws:nontee_aws_kms_client_provider_no_factory",
+        "//cc/cpio/common/src/aws:aws_utils_lib",
         "//cc/public/core/interface:execution_result",
         "//cc/public/cpio/interface:cpio_errors",
         "//cc/public/cpio/interface/kms_client",

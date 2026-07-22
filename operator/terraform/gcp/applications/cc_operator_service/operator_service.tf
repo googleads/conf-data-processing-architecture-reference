@@ -308,6 +308,8 @@ module "otel_collector" {
   network     = module.vpc.network
   region_zone = var.region_zone
 
+  internet_tag_for_otel = module.vpc.egress_internet_tag
+
   subnets_per_region            = module.vpc.collector_subnet_ids
   proxy_only_subnets_per_region = module.vpc.proxy_subnet_ids
 

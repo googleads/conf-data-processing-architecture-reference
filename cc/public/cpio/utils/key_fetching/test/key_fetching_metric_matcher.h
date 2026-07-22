@@ -131,7 +131,7 @@ void ExpectOtelKeyFetchingErrorMetricPush(
     DualWritingMetricClientMock& mock_metric_client, int call_count,
     absl::string_view key_type = "", absl::string_view key_fetching_type = "",
     absl::string_view keyset_name = "",
-    absl::string_view error_code = "ERROR_CODE_KEY_FETCHING_ERROR");
+    absl::string_view error_code = KeyFetchingErrorType::kGenericError);
 
 // call_count < 0 means the times is not deterministic.
 void ExpectOtelKeyFetchingRequestMetricPush(

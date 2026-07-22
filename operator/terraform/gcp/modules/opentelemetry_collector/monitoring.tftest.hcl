@@ -38,6 +38,7 @@ variables {
   network                          = ""
   subnet_id                        = ""
   region                           = "region"
+  internet_tag_for_otel            = "egress-internet"
   user_provided_collector_sa_email = ""
   collector_instance_type          = ""
   collector_startup_script         = ""

@@ -60,6 +60,12 @@ variable "proxy_only_subnets_per_region" {
 # OpenTelemetry Collector variables
 ################################################################################
 
+variable "internet_tag_for_otel" {
+  description = "Instance tag that grants internet access to the otel instances."
+  type        = string
+  default     = "egress-internet"
+}
+
 variable "collector_instance_type" {
   description = "GCE instance type for worker."
   type        = string

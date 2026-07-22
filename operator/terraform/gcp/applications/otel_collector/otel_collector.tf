@@ -29,6 +29,8 @@ module "otel_collector" {
   project_id  = var.project_id
   network     = var.network
 
+  internet_tag_for_otel = var.internet_tag_for_otel
+
   subnets_per_region        = var.subnets_per_region
   collector_regional_config = var.collector_regional_config
 

@@ -22,6 +22,7 @@ cc_test(
     size = "small",
     srcs = [
         "gcp_blob_storage_client_provider_test.cc",
+        "mock_gcp_cloud_storage_client.h",
     ],
     deps = [
         "//cc:cc_base_include_dir",
@@ -31,7 +32,6 @@ cc_test(
         "//cc/cpio/client_providers/instance_client_provider/mock:instance_client_provider_mock",
         "//cc/public/core/test/interface:execution_result_matchers",
         "@com_github_googleapis_google_cloud_cpp//:storage",
-        "@com_github_googleapis_google_cloud_cpp//google/cloud/storage:storage_client_testing",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -41,6 +41,7 @@ cc_test(
     size = "small",
     srcs = [
         "gcp_blob_storage_client_provider_stream_test.cc",
+        "mock_gcp_cloud_storage_client.h",
     ],
     deps = [
         "//cc:cc_base_include_dir",
@@ -50,7 +51,6 @@ cc_test(
         "//cc/cpio/client_providers/instance_client_provider/mock:instance_client_provider_mock",
         "//cc/public/core/test/interface:execution_result_matchers",
         "@com_github_googleapis_google_cloud_cpp//:storage",
-        "@com_github_googleapis_google_cloud_cpp//google/cloud/storage:storage_client_testing",
         "@com_google_googletest//:gtest_main",
     ],
 )

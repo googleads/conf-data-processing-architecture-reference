@@ -16,7 +16,6 @@
 
 locals {
   collector_service_account_email = var.user_provided_collector_sa_email == "" ? google_service_account.collector_service_account[0].email : var.user_provided_collector_sa_email
-  egress_internet_tag             = "egress-internet"
   startup_script_hash             = sha256(var.collector_startup_script)
   zonal_config_list = flatten([
     for key, config_per_region in var.collector_regional_config : [
@@ -98,7 +97,7 @@ resource "google_compute_instance_template" "collector" {
     var.environment,
     "otel-collector",
     "allow-otlp",
-    local.egress_internet_tag,
+    var.internet_tag_for_otel,
   ])
 
   labels = {

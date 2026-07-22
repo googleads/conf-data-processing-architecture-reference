@@ -83,6 +83,11 @@ variable "collector_service_port_name" {
   type        = string
 }
 
+variable "internet_tag_for_otel" {
+  description = "Instance tag that grants internet access to the otel instances. This tag should be present in the route table for the VPC network where the otel collector and server are deployed in."
+  type        = string
+}
+
 ################################################################################
 # Regional Variables.
 ################################################################################

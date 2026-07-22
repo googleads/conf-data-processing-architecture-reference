@@ -186,7 +186,7 @@ class OndemandKeyFetcherWithCacheTest : public ScpTestBase {
       int call_count,
       absl::string_view key_fetching_type = KeyFetchingType::kOnDemand,
       absl::string_view keyset_name = kKeyNamespace1,
-      absl::string_view error_code = "ERROR_CODE_KEY_FETCHING_ERROR") {
+      absl::string_view error_code = KeyFetchingErrorType::kGenericError) {
     ExpectOtelKeyFetchingErrorMetricPush(
         mock_metric_client_, call_count, KeyType::kEncryptionKey,
         key_fetching_type, keyset_name, error_code);
@@ -408,9 +408,9 @@ TEST_F(OndemandKeyFetcherWithCacheTest,
   ExpectOtelEncryptionKeyCacheStatusMetricPush(
       1, kAllKeyNamespaces, KeyCacheStatus::kInvalidKeyCacheHit);
   ExpectOtelEncryptionKeyAgeInDaysMetricPush(0);
-  ExpectOtelEncryptionKeyFetchingErrorMetricPush(1, KeyFetchingType::kOnDemand,
-                                                 kAllKeyNamespaces,
-                                                 "ERROR_CODE_INVALID_KEY_ID");
+  ExpectOtelEncryptionKeyFetchingErrorMetricPush(
+      1, KeyFetchingType::kOnDemand, kAllKeyNamespaces,
+      KeyFetchingErrorType::kInvalidKeyId);
 
   auto key_create_ts =
       duration_cast<nanoseconds>((system_clock::now()).time_since_epoch());
@@ -447,9 +447,9 @@ TEST_F(OndemandKeyFetcherWithCacheTest,
   ExpectOtelEncryptionKeyCacheStatusMetricPush(
       1, kAllKeyNamespaces, KeyCacheStatus::kInvalidKeyCacheHit);
   ExpectOtelEncryptionKeyAgeInDaysMetricPush(0);
-  ExpectOtelEncryptionKeyFetchingErrorMetricPush(1, KeyFetchingType::kOnDemand,
-                                                 kAllKeyNamespaces,
-                                                 "ERROR_CODE_INVALID_KEY_ID");
+  ExpectOtelEncryptionKeyFetchingErrorMetricPush(
+      1, KeyFetchingType::kOnDemand, kAllKeyNamespaces,
+      KeyFetchingErrorType::kInvalidKeyId);
 
   request_.add_key_ids(kInputKeyId1);
   EXPECT_CALL(mock_key_client_, ListPrivateKeysSync(EqualsProto(request_)))
@@ -474,9 +474,9 @@ TEST_F(OndemandKeyFetcherWithCacheTest, InvalidKeyWithEmptyResponseCachedById) {
   ExpectOtelEncryptionKeyCacheStatusMetricPush(
       1, kAllKeyNamespaces, KeyCacheStatus::kInvalidKeyCacheHit);
   ExpectOtelEncryptionKeyAgeInDaysMetricPush(0);
-  ExpectOtelEncryptionKeyFetchingErrorMetricPush(1, KeyFetchingType::kOnDemand,
-                                                 kAllKeyNamespaces,
-                                                 "ERROR_CODE_INVALID_KEY_ID");
+  ExpectOtelEncryptionKeyFetchingErrorMetricPush(
+      1, KeyFetchingType::kOnDemand, kAllKeyNamespaces,
+      KeyFetchingErrorType::kInvalidKeyId);
 
   request_.add_key_ids(kInvalidInputKeyId);
   ListPrivateKeysResponse empty_response;
@@ -504,7 +504,7 @@ TEST_F(OndemandKeyFetcherWithCacheTest,
   ExpectOtelEncryptionKeyAgeInDaysMetricPush(0);
   ExpectOtelEncryptionKeyFetchingErrorMetricPush(
       1, KeyFetchingType::kOnDemand, kAllKeyNamespaces,
-      "ERROR_CODE_KEY_FETCHING_ERROR");
+      KeyFetchingErrorType::kGenericError);
 
   request_.add_key_ids(kInvalidInputKeyId);
   ListPrivateKeysResponse response;
@@ -583,7 +583,7 @@ TEST_F(OndemandKeyFetcherWithCacheTest, PrefetchListingKeysFailsNoRetry) {
       1, KeyFetchingType::kPrefetch, kKeyNamespace1);
   ExpectOtelEncryptionKeyFetchingErrorMetricPush(
       1, KeyFetchingType::kPrefetch, kKeyNamespace1,
-      "ERROR_CODE_KEY_FETCHING_ERROR");
+      KeyFetchingErrorType::kGenericError);
 
   seconds max_age_seconds(5);
   // Make a new KeyFetcher with the proper settings
@@ -613,14 +613,14 @@ TEST_F(OndemandKeyFetcherWithCacheTest, PrefetchListingKeysFailsWithRetry) {
       1, KeyFetchingType::kPrefetch, kKeyNamespace1);
   ExpectOtelEncryptionKeyFetchingErrorMetricPush(
       1, KeyFetchingType::kPrefetch, kKeyNamespace1,
-      "ERROR_CODE_KEY_FETCHING_ERROR");
+      KeyFetchingErrorType::kGenericError);
   ExpectOtelEncryptionKeyFetchingRequestMetricPush(
       1, KeyFetchingType::kPrefetchRetry, kKeyNamespace1);
   ExpectOtelEncryptionKeyFetchingLatencyMetricPush(
       1, KeyFetchingType::kPrefetchRetry, kKeyNamespace1);
   ExpectOtelEncryptionKeyFetchingErrorMetricPush(
       1, KeyFetchingType::kPrefetchRetry, kKeyNamespace1,
-      "ERROR_CODE_KEY_FETCHING_ERROR");
+      KeyFetchingErrorType::kGenericError);
 
   seconds max_age_seconds(5);
   // Make a new KeyFetcher with the proper settings
@@ -704,7 +704,7 @@ TEST_F(OndemandKeyFetcherWithCacheTest, OndemandFetchingTimeout) {
   ExpectOtelEncryptionKeyAgeInDaysMetricPush(1, kKeyNamespace1, 0);
   ExpectOtelEncryptionKeyFetchingErrorMetricPush(
       -1, KeyFetchingType::kOnDemand, kAllKeyNamespaces,
-      "ERROR_CODE_KEY_FETCHING_ERROR");
+      KeyFetchingErrorType::kGenericError);
 
   OndemandKeyFetcherWithCache key_fetcher_with_cache(
       async_executor_, mock_key_client_, mock_metric_client_,
@@ -763,9 +763,9 @@ TEST_F(OndemandKeyFetcherWithCacheTest,
       -1, kAllKeyNamespaces, KeyCacheStatus::kValidKeyCacheMiss);
   ExpectOtelEncryptionKeyCacheStatusMetricPush(
       -1, kAllKeyNamespaces, KeyCacheStatus::kInvalidKeyCacheHit);
-  ExpectOtelEncryptionKeyFetchingErrorMetricPush(1, KeyFetchingType::kOnDemand,
-                                                 kAllKeyNamespaces,
-                                                 "ERROR_CODE_INVALID_KEY_ID");
+  ExpectOtelEncryptionKeyFetchingErrorMetricPush(
+      1, KeyFetchingType::kOnDemand, kAllKeyNamespaces,
+      KeyFetchingErrorType::kInvalidKeyId);
 
   OndemandKeyFetcherWithCache key_fetcher_with_cache(
       async_executor_, mock_key_client_, mock_metric_client_,
@@ -879,7 +879,7 @@ TEST_F(OndemandKeyFetcherWithCacheActiveTest, PrefetchingActiveKeysFails) {
       1, KeyFetchingType::kPrefetch, kKeyNamespace1);
   ExpectOtelEncryptionKeyFetchingErrorMetricPush(
       1, KeyFetchingType::kPrefetch, kKeyNamespace1,
-      "ERROR_CODE_KEY_FETCHING_ERROR");
+      KeyFetchingErrorType::kGenericError);
 
   ExpectOtelEncryptionKeyFetchingRequestMetricPush(
       1, KeyFetchingType::kPrefetch, kKeyNamespace2);
@@ -887,7 +887,7 @@ TEST_F(OndemandKeyFetcherWithCacheActiveTest, PrefetchingActiveKeysFails) {
       1, KeyFetchingType::kPrefetch, kKeyNamespace2);
   ExpectOtelEncryptionKeyFetchingErrorMetricPush(
       1, KeyFetchingType::kPrefetch, kKeyNamespace2,
-      "ERROR_CODE_KEY_FETCHING_ERROR");
+      KeyFetchingErrorType::kGenericError);
 
   EXPECT_CALL(mock_key_client_,
               ListActiveEncryptionKeysSync(EqualsProtoIgnoringTimeRange(
@@ -909,9 +909,9 @@ TEST_F(OndemandKeyFetcherWithCacheActiveTest, PrefetchingActiveKeysFails) {
       1, KeyFetchingType::kOnDemand, kAllKeyNamespaces);
   ExpectOtelEncryptionKeyFetchingLatencyMetricPush(
       1, KeyFetchingType::kOnDemand, kAllKeyNamespaces);
-  ExpectOtelEncryptionKeyFetchingErrorMetricPush(1, KeyFetchingType::kOnDemand,
-                                                 kAllKeyNamespaces,
-                                                 "ERROR_CODE_INVALID_KEY_ID");
+  ExpectOtelEncryptionKeyFetchingErrorMetricPush(
+      1, KeyFetchingType::kOnDemand, kAllKeyNamespaces,
+      KeyFetchingErrorType::kInvalidKeyId);
 
   ListPrivateKeysRequest expected_ondemand_request;
   for (const auto& endpoint : request_.key_endpoints()) {
@@ -953,7 +953,7 @@ TEST_F(OndemandKeyFetcherWithCacheActiveTest,
       1, KeyFetchingType::kPrefetch, kKeyNamespace2);
   ExpectOtelEncryptionKeyFetchingErrorMetricPush(
       1, KeyFetchingType::kPrefetch, kKeyNamespace2,
-      "ERROR_CODE_KEY_FETCHING_ERROR");
+      KeyFetchingErrorType::kGenericError);
 
   auto key_create_ts =
       duration_cast<nanoseconds>((system_clock::now()).time_since_epoch());
@@ -986,9 +986,9 @@ TEST_F(OndemandKeyFetcherWithCacheActiveTest,
       1, KeyFetchingType::kOnDemand, kAllKeyNamespaces);
   ExpectOtelEncryptionKeyFetchingLatencyMetricPush(
       1, KeyFetchingType::kOnDemand, kAllKeyNamespaces);
-  ExpectOtelEncryptionKeyFetchingErrorMetricPush(1, KeyFetchingType::kOnDemand,
-                                                 kAllKeyNamespaces,
-                                                 "ERROR_CODE_INVALID_KEY_ID");
+  ExpectOtelEncryptionKeyFetchingErrorMetricPush(
+      1, KeyFetchingType::kOnDemand, kAllKeyNamespaces,
+      KeyFetchingErrorType::kInvalidKeyId);
 
   ListPrivateKeysRequest expected_ondemand_request;
   for (const auto& endpoint : request_.key_endpoints()) {
@@ -1037,9 +1037,9 @@ TEST_F(OndemandKeyFetcherWithCacheActiveTest,
       1, KeyFetchingType::kOnDemand, kAllKeyNamespaces);
   ExpectOtelEncryptionKeyFetchingLatencyMetricPush(
       1, KeyFetchingType::kOnDemand, kAllKeyNamespaces);
-  ExpectOtelEncryptionKeyFetchingErrorMetricPush(1, KeyFetchingType::kOnDemand,
-                                                 kAllKeyNamespaces,
-                                                 "ERROR_CODE_INVALID_KEY_ID");
+  ExpectOtelEncryptionKeyFetchingErrorMetricPush(
+      1, KeyFetchingType::kOnDemand, kAllKeyNamespaces,
+      KeyFetchingErrorType::kInvalidKeyId);
 
   ListPrivateKeysRequest expected_ondemand_request;
   for (const auto& endpoint : request_.key_endpoints()) {
@@ -1278,7 +1278,7 @@ TEST_F(OndemandKeyFetcherWithCacheTest,
       1, KeyFetchingType::kPrefetch, kKeyNamespace1);
   ExpectOtelEncryptionKeyFetchingErrorMetricPush(
       1, KeyFetchingType::kPrefetch, kKeyNamespace1,
-      "ERROR_CODE_KEY_FETCHING_ERROR");
+      KeyFetchingErrorType::kGenericError);
 
   seconds max_age_seconds(5);
   // Make a new KeyFetcher with the proper settings
@@ -1322,14 +1322,14 @@ TEST_F(OndemandKeyFetcherWithCacheTest,
       1, KeyFetchingType::kPrefetch, kKeyNamespace1);
   ExpectOtelEncryptionKeyFetchingErrorMetricPush(
       1, KeyFetchingType::kPrefetch, kKeyNamespace1,
-      "ERROR_CODE_KEY_FETCHING_ERROR");
+      KeyFetchingErrorType::kGenericError);
   ExpectOtelEncryptionKeyFetchingRequestMetricPush(
       1, KeyFetchingType::kPrefetchRetry, kKeyNamespace1);
   ExpectOtelEncryptionKeyFetchingLatencyMetricPush(
       1, KeyFetchingType::kPrefetchRetry, kKeyNamespace1);
   ExpectOtelEncryptionKeyFetchingErrorMetricPush(
       1, KeyFetchingType::kPrefetchRetry, kKeyNamespace1,
-      "ERROR_CODE_KEY_FETCHING_ERROR");
+      KeyFetchingErrorType::kGenericError);
 
   seconds max_age_seconds(5);
   // Make a new KeyFetcher with the proper settings

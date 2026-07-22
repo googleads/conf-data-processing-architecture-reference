@@ -27,6 +27,7 @@
 #include "core/interface/config_provider_interface.h"
 #include "core/interface/streaming_context.h"
 #include "cpio/client_providers/blob_storage_client_provider/src/common/error_codes.h"
+#include "cpio/client_providers/blob_storage_client_provider/src/gcp/gcp_cloud_storage_client.h"
 #include "cpio/client_providers/interface/blob_storage_client_provider_interface.h"
 #include "cpio/client_providers/interface/instance_client_provider_interface.h"
 #include "cpio/common/src/gcp/gcp_utils.h"
@@ -54,7 +55,7 @@ class GcpBlobStorageClientProvider : public BlobStorageClientProviderInterface {
         io_async_executor_(io_async_executor),
         cloud_storage_client_pool_(
             std::make_unique<core::common::AutoExpiryConcurrentMap<
-                std::string, std::shared_ptr<google::cloud::storage::Client>>>(
+                std::string, std::shared_ptr<GcpCloudStorageClientInterface>>>(
                 options_->cached_client_lifetime.count(),
                 true /* extend_entry_lifetime_on_access */,
                 true /* block_entry_while_eviction */,
@@ -143,7 +144,7 @@ class GcpBlobStorageClientProvider : public BlobStorageClientProviderInterface {
   // GetBlobStreamResponse from it. Updates trackers members.
   cmrt::sdk::blob_storage_service::v1::GetBlobStreamResponse ReadNextPortion(
       const cmrt::sdk::blob_storage_service::v1::GetBlobStreamRequest& request,
-      GetBlobStreamTracker& tracker) noexcept;
+      GetBlobStreamTracker& tracker) noexcept;  // NOLINT(runtime/references)
 
   /**
    * @brief Is called when the object is returned from the Cloud Storage
@@ -204,8 +205,9 @@ class GcpBlobStorageClientProvider : public BlobStorageClientProviderInterface {
           put_blob_stream_context) noexcept;
 
   void RestoreUploadIfSuspended(
-      PutBlobStreamTracker& tracker,
-      google::cloud::storage::Client& cloud_storage_client) noexcept;
+      PutBlobStreamTracker& tracker,  // NOLINT(runtime/references)
+      GcpCloudStorageClientInterface&
+          cloud_storage_client) noexcept;  // NOLINT(runtime/references)
 
   /**
    * @brief Is called when the object is returned from the Cloud Storage
@@ -241,7 +243,7 @@ class GcpBlobStorageClientProvider : public BlobStorageClientProviderInterface {
    * @param cloud_identity_info The cloud indentity info
    * from the request.
    */
-  core::ExecutionResultOr<std::shared_ptr<google::cloud::storage::Client>>
+  core::ExecutionResultOr<std::shared_ptr<GcpCloudStorageClientInterface>>
   GetClient(std::shared_ptr<BlobStorageClientOptions> options,
             const cmrt::sdk::common::v1::CloudIdentityInfo&
                 cloud_identity_info) noexcept;
@@ -249,8 +251,9 @@ class GcpBlobStorageClientProvider : public BlobStorageClientProviderInterface {
   // Checks if stream has an error and finishes context if it does. This is
   // unlikely to happen.
   template <typename Context, typename Stream>
-  core::ExecutionResult ValidateStream(Context& context,
-                                       const Stream& stream) noexcept {
+  core::ExecutionResult ValidateStream(
+      Context& context,  // NOLINT(runtime/references)
+      const Stream& stream) noexcept {
     constexpr bool is_read =
         std::is_same_v<Stream, google::cloud::storage::ObjectReadStream>;
     constexpr bool is_write =
@@ -272,7 +275,7 @@ class GcpBlobStorageClientProvider : public BlobStorageClientProviderInterface {
     }
     auto result = core::SuccessExecutionResult();
     if (!status.ok()) {
-      result = common::GcpUtils::GcpErrorConverter(status);
+      result = GetConvertedFailureExecutionResult(status);
       SCP_ERROR_CONTEXT(kGcpBlobStorageClientProvider, context, result,
                         "Blob stream failed. Message: %s.",
                         status.message().c_str());
@@ -292,7 +295,7 @@ class GcpBlobStorageClientProvider : public BlobStorageClientProviderInterface {
    * @param cloud_identity_info The cloud identity info to create GCS client.
    * Also is the key for the client pool.
    */
-  core::ExecutionResultOr<std::shared_ptr<google::cloud::storage::Client>>
+  core::ExecutionResultOr<std::shared_ptr<GcpCloudStorageClientInterface>>
   GetOrCreateCloudStroageClient(
       cmrt::sdk::common::v1::CloudIdentityInfo cloud_identity_info) noexcept;
 
@@ -306,8 +309,9 @@ class GcpBlobStorageClientProvider : public BlobStorageClientProviderInterface {
    * request.
    */
   void OnBeforeGarbageCollection(
-      std::string& client_identity,
-      std::shared_ptr<google::cloud::storage::Client>& client,
+      std::string& client_identity,  // NOLINT(runtime/references)
+      std::shared_ptr<GcpCloudStorageClientInterface>&
+          client,  // NOLINT(runtime/references)
       std::function<void(bool)> should_delete_entry) noexcept;
 
   core::ExecutionResult GetConvertedFailureExecutionResult(
@@ -329,7 +333,7 @@ class GcpBlobStorageClientProvider : public BlobStorageClientProviderInterface {
 
   /// Pool of the instance of GCP GCS clients.
   std::unique_ptr<core::common::AutoExpiryConcurrentMap<
-      std::string, std::shared_ptr<google::cloud::storage::Client>>>
+      std::string, std::shared_ptr<GcpCloudStorageClientInterface>>>
       cloud_storage_client_pool_;
 
   static constexpr char kGcpBlobStorageClientProvider[] =
@@ -340,7 +344,7 @@ class GcpBlobStorageClientProvider : public BlobStorageClientProviderInterface {
 class GcpCloudStorageFactory {
  public:
   virtual core::ExecutionResultOr<
-      std::shared_ptr<google::cloud::storage::Client>>
+      std::shared_ptr<GcpCloudStorageClientInterface>>
   CreateClient(std::shared_ptr<BlobStorageClientOptions> options,
                const std::string& project_id,
                const std::string& wip_provider) noexcept;

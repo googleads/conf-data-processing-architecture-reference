@@ -142,7 +142,7 @@ class AutoRefreshKeyFetcherWithCacheTest : public ScpTestBase {
   void ExpectOtelSidKeyFetchingErrorMetricPush(
       int call_count,
       absl::string_view key_fetching_type = KeyFetchingType::kOnDemand,
-      absl::string_view error_code = "ERROR_CODE_KEY_FETCHING_ERROR",
+      absl::string_view error_code = KeyFetchingErrorType::kGenericError,
       absl::string_view keyset = kKeyNamespaceId) {
     ExpectOtelKeyFetchingErrorMetricPush(mock_metric_client_, call_count,
                                          KeyType::kSidKey, key_fetching_type,
@@ -224,7 +224,7 @@ TEST_F(AutoRefreshKeyFetcherWithCacheTest,
   ExpectOtelSidKeyFetchingRequestMetricPush(1, KeyFetchingType::kPrefetch);
   ExpectOtelSidKeyFetchingLatencyMetricPush(1, KeyFetchingType::kPrefetch);
   ExpectOtelSidKeyFetchingErrorMetricPush(1, KeyFetchingType::kPrefetch,
-                                          "ERROR_CODE_KEY_FETCHING_ERROR");
+                                          KeyFetchingErrorType::kGenericError);
   ExpectOtelKeysetFetchingRequestMetricPush(1, KeyFetchingType::kPrefetch);
 
   GetKeysetMetadataResponse keyset_metadata_response;
@@ -248,7 +248,7 @@ TEST_F(AutoRefreshKeyFetcherWithCacheTest,
   ExpectOtelSidKeyCacheStatusMetricPush(1, KeyCacheStatus::kValidKeyCacheMiss);
   ExpectOtelSidKeyFetchingErrorMetricPush(0);
   ExpectOtelSidKeyFetchingErrorMetricPush(1, KeyFetchingType::kPrefetch,
-                                          "ERROR_CODE_KEY_FETCHING_ERROR");
+                                          KeyFetchingErrorType::kGenericError);
   ExpectOtelKeysetFetchingRequestMetricPush(1, KeyFetchingType::kPrefetch);
 
   GetKeysetMetadataResponse keyset_metadata_response;
@@ -792,7 +792,7 @@ TEST_F(AutoRefreshKeyFetcherWithCacheTest, OnDemandKeysFetchingTimeout) {
   ExpectOtelSidKeyCacheStatusMetricPush(0, KeyCacheStatus::kValidKeyCacheHit);
   ExpectOtelSidKeyCacheStatusMetricPush(-1, KeyCacheStatus::kValidKeyCacheMiss);
   ExpectOtelSidKeyFetchingErrorMetricPush(1, KeyFetchingType::kPrefetch,
-                                          "ERROR_CODE_KEY_FETCHING_ERROR");
+                                          KeyFetchingErrorType::kGenericError);
   ExpectOtelKeysetFetchingRequestMetricPush(1, KeyFetchingType::kPrefetch);
 
   GetKeysetMetadataResponse keyset_metadata_response;
@@ -1549,7 +1549,7 @@ TEST_F(AutoRefreshKeyFetcherWithCacheTest,
   ExpectOtelSidKeyCacheStatusMetricPush(-1, KeyCacheStatus::kValidKeyCacheHit);
   ExpectOtelSidKeyCacheStatusMetricPush(-1, KeyCacheStatus::kValidKeyCacheMiss);
   ExpectOtelSidKeyFetchingErrorMetricPush(1, KeyFetchingType::kPrefetch,
-                                          "ERROR_CODE_KEY_FETCHING_ERROR");
+                                          KeyFetchingErrorType::kGenericError);
   ExpectOtelKeysetFetchingRequestMetricPush(1, KeyFetchingType::kPrefetch);
 
   GetKeysetMetadataResponse keyset_metadata_response;
@@ -1626,9 +1626,9 @@ TEST_F(AutoRefreshKeyFetcherWithCacheTest,
   ExpectOtelSidKeyCacheStatusMetricPush(0, KeyCacheStatus::kValidKeyCacheHit);
   ExpectOtelSidKeyCacheStatusMetricPush(-1, KeyCacheStatus::kValidKeyCacheMiss);
   ExpectOtelSidKeyFetchingErrorMetricPush(1, KeyFetchingType::kPrefetch,
-                                          "ERROR_CODE_KEY_FETCHING_ERROR");
+                                          KeyFetchingErrorType::kGenericError);
   ExpectOtelSidKeyFetchingErrorMetricPush(-1, KeyFetchingType::kOnDemand,
-                                          "ERROR_CODE_KEY_FETCHING_ERROR");
+                                          KeyFetchingErrorType::kGenericError);
   ExpectOtelKeysetFetchingRequestMetricPush(1, KeyFetchingType::kPrefetch);
 
   GetKeysetMetadataResponse keyset_metadata_response;
@@ -1677,11 +1677,11 @@ TEST_F(AutoRefreshKeyFetcherWithCacheTest, PrefetchFailsWithRetry) {
   ExpectOtelSidKeyFetchingRequestMetricPush(1, KeyFetchingType::kPrefetch);
   ExpectOtelSidKeyFetchingLatencyMetricPush(1, KeyFetchingType::kPrefetch);
   ExpectOtelSidKeyFetchingErrorMetricPush(1, KeyFetchingType::kPrefetch,
-                                          "ERROR_CODE_KEY_FETCHING_ERROR");
+                                          KeyFetchingErrorType::kGenericError);
   ExpectOtelSidKeyFetchingRequestMetricPush(1, KeyFetchingType::kPrefetchRetry);
   ExpectOtelSidKeyFetchingLatencyMetricPush(1, KeyFetchingType::kPrefetchRetry);
   ExpectOtelSidKeyFetchingErrorMetricPush(1, KeyFetchingType::kPrefetchRetry,
-                                          "ERROR_CODE_KEY_FETCHING_ERROR");
+                                          KeyFetchingErrorType::kGenericError);
   ExpectOtelKeysetFetchingRequestMetricPush(1, KeyFetchingType::kPrefetch);
 
   GetKeysetMetadataResponse keyset_metadata_response;

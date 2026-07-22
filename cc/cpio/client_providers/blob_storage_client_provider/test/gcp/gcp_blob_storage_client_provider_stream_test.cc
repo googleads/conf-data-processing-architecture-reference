@@ -16,8 +16,6 @@
 #include <string>
 #include <vector>
 
-#include <google/protobuf/util/time_util.h>
-
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "core/async_executor/mock/mock_async_executor.h"
@@ -28,11 +26,16 @@
 #include "core/utils/src/hashing.h"
 #include "cpio/client_providers/blob_storage_client_provider/src/common/error_codes.h"
 #include "cpio/client_providers/blob_storage_client_provider/src/gcp/gcp_blob_storage_client_provider.h"
+#include "cpio/client_providers/blob_storage_client_provider/src/gcp/gcp_cloud_storage_client.h"
+#include "cpio/client_providers/blob_storage_client_provider/test/gcp/mock_gcp_cloud_storage_client.h"
 #include "cpio/client_providers/instance_client_provider/mock/mock_instance_client_provider.h"
+#include "google/cloud/internal/pagination_range.h"
 #include "google/cloud/status.h"
 #include "google/cloud/storage/client.h"
+#include "google/cloud/storage/internal/object_read_streambuf.h"
 #include "google/cloud/storage/internal/object_requests.h"
-#include "google/cloud/storage/testing/mock_client.h"
+#include "google/cloud/storage/internal/object_write_streambuf.h"
+#include "google/protobuf/util/time_util.h"
 #include "public/core/test/interface/execution_result_matchers.h"
 
 using google::cloud::Status;
@@ -59,9 +62,6 @@ using google::cloud::storage::internal::QueryResumableUploadResponse;
 using google::cloud::storage::internal::ReadSourceResult;
 using google::cloud::storage::internal::ResumableUploadRequest;
 using google::cloud::storage::internal::UploadChunkRequest;
-using google::cloud::storage::testing::ClientFromMock;
-using google::cloud::storage::testing::MockClient;
-using google::cloud::storage::testing::MockObjectReadSource;
 using google::cmrt::sdk::blob_storage_service::v1::GetBlobStreamRequest;
 using google::cmrt::sdk::blob_storage_service::v1::GetBlobStreamResponse;
 using google::cmrt::sdk::blob_storage_service::v1::PutBlobStreamRequest;
@@ -96,7 +96,14 @@ using google::scp::core::utils::Base64Encode;
 using google::scp::core::utils::CalculateMd5Hash;
 using google::scp::cpio::client_providers::GcpBlobStorageClientProvider;
 using google::scp::cpio::client_providers::GcpCloudStorageFactory;
+using google::scp::cpio::client_providers::mock::BuildObjectWriteStream;
+using google::scp::cpio::client_providers::mock::
+    BuildObjectWriteStreamFromStatus;
+using google::scp::cpio::client_providers::mock::BuildReadStreamFromString;
+using google::scp::cpio::client_providers::mock::MockGcpCloudStorageClient;
+using google::scp::cpio::client_providers::mock::MockGcpCloudStorageFactory;
 using google::scp::cpio::client_providers::mock::MockInstanceClientProvider;
+using google::scp::cpio::client_providers::mock::MockObjectReadSource;
 using std::make_shared;
 using std::make_tuple;
 using std::make_unique;
@@ -120,6 +127,7 @@ using testing::Pointwise;
 using testing::Return;
 
 namespace google::scp::cpio::client_providers::test {
+
 namespace {
 constexpr char kInstanceResourceName[] =
     R"(//compute.googleapis.com/projects/123456789/zones/us-central1-c/instances/987654321)";
@@ -133,14 +141,6 @@ constexpr char kWipProvider[] = "testWipProvider";
 // from google/cloud/storage/client_options.cc which is not visible publicly.
 constexpr size_t kUploadSize = 8 * 1024 * 1024;
 
-class MockGcpCloudStorageFactory : public GcpCloudStorageFactory {
- public:
-  MOCK_METHOD(core::ExecutionResultOr<shared_ptr<Client>>, CreateClient,
-              (shared_ptr<BlobStorageClientOptions>, const string&,
-               const string&),
-              (noexcept, override));
-};
-
 class GcpBlobStorageClientProviderStreamTest
     : public ScpTestBase,
       public testing::WithParamInterface<tuple<string, string>> {
@@ -149,7 +149,7 @@ class GcpBlobStorageClientProviderStreamTest
       : options_(make_shared<BlobStorageClientOptions>()),
         instance_client_(make_shared<MockInstanceClientProvider>()),
         storage_factory_(make_shared<NiceMock<MockGcpCloudStorageFactory>>()),
-        mock_client_(make_shared<NiceMock<MockClient>>()),
+        mock_client_(make_shared<NiceMock<MockGcpCloudStorageClient>>()),
         real_cpu_async_executor_(make_shared<AsyncExecutor>(
             /*thread_count=*/1, /*queue_cap=*/1000)),
         real_io_async_executor_(make_shared<AsyncExecutor>(
@@ -158,8 +158,7 @@ class GcpBlobStorageClientProviderStreamTest
                                  real_cpu_async_executor_,
                                  real_io_async_executor_, storage_factory_) {
     ON_CALL(*storage_factory_, CreateClient)
-        .WillByDefault(
-            Return(make_shared<Client>(ClientFromMock(mock_client_))));
+        .WillByDefault(Return(mock_client_));
     options_->enable_new_gcp_error_code_converter = false;
     instance_client_->instance_resource_name = kInstanceResourceName;
     get_blob_stream_context_.request = make_shared<GetBlobStreamRequest>();
@@ -188,7 +187,8 @@ class GcpBlobStorageClientProviderStreamTest
   }
 
   template <typename Context>
-  void MaybeExpectCreateClientCall(Context& context) {
+  void MaybeExpectCreateClientCall(
+      Context& context) {  // NOLINT(runtime/references)
     const auto& [owner_id, wip_provider] = GetParam();
     if (!owner_id.empty()) {
       context.request->mutable_cloud_identity_info()->set_owner_id(owner_id);
@@ -197,14 +197,14 @@ class GcpBlobStorageClientProviderStreamTest
           ->mutable_gcp_attestation_info()
           ->set_wip_provider(wip_provider);
       EXPECT_CALL(*storage_factory_, CreateClient(_, owner_id, wip_provider))
-          .WillOnce(Return(make_shared<Client>(ClientFromMock(mock_client_))));
+          .WillOnce(Return(mock_client_));
     }
   }
 
   shared_ptr<BlobStorageClientOptions> options_;
   shared_ptr<MockInstanceClientProvider> instance_client_;
   shared_ptr<MockGcpCloudStorageFactory> storage_factory_;
-  shared_ptr<MockClient> mock_client_;
+  shared_ptr<MockGcpCloudStorageClient> mock_client_;
   shared_ptr<AsyncExecutorInterface> real_cpu_async_executor_,
       real_io_async_executor_;
   GcpBlobStorageClientProvider gcp_blob_storage_client_;
@@ -290,55 +290,76 @@ MATCHER_P2(ReadObjectRequestEqual, bucket_name, blob_name, "") {
 // Builds an ObjectReadSource that contains the bytes (copied) from bytes_str.
 StatusOr<unique_ptr<ObjectReadSource>> BuildReadResponseFromString(
     const string& bytes_str) {
-  // We want the following methods to be called in order, so make an InSequence.
-  InSequence seq;
   auto mock_source = make_unique<MockObjectReadSource>();
   EXPECT_CALL(*mock_source, IsOpen).WillRepeatedly(Return(true));
-  // Copy up to n bytes from input into buf.
+  EXPECT_CALL(*mock_source, Close)
+      .WillRepeatedly(Return(HttpResponse{200, {}, {}}));
+  auto offset = make_shared<size_t>(0);
   EXPECT_CALL(*mock_source, Read)
-      .WillOnce([bytes_str = bytes_str](void* buf, std::size_t n) {
-        BytesBuffer buffer(bytes_str.length());
-        buffer.bytes->assign(bytes_str.begin(), bytes_str.end());
-        buffer.length = bytes_str.length();
-        auto length = std::min(buffer.length, n);
-        std::memcpy(buf, buffer.bytes->data(), length);
-        ReadSourceResult result{length, HttpResponse{200, {}, {}}};
-
-        result.hashes.md5 = *CalculateMd5Hash(buffer);
-        result.hashes.md5 = *Base64Encode(result.hashes.md5);
-
-        result.size = length;
-        return result;
-      });
-  EXPECT_CALL(*mock_source, IsOpen).WillRepeatedly(Return(false));
+      .WillRepeatedly(
+          [bytes_str = bytes_str, offset](void* buf, std::size_t n) {
+            if (*offset >= bytes_str.length()) {
+              return ReadSourceResult{0, HttpResponse{200, {}, {}}};
+            }
+            BytesBuffer buffer(bytes_str.length());
+            buffer.bytes->assign(bytes_str.begin(), bytes_str.end());
+            buffer.length = bytes_str.length();
+            auto length = std::min(bytes_str.length() - *offset, n);
+            std::memcpy(buf, buffer.bytes->data() + *offset, length);
+            *offset += length;
+            ReadSourceResult result{length, HttpResponse{200, {}, {}}};
+            result.hashes.md5 = *CalculateMd5Hash(buffer);
+            result.hashes.md5 = *Base64Encode(result.hashes.md5);
+            result.size = bytes_str.length();
+            return result;
+          });
   return unique_ptr<ObjectReadSource>(std::move(mock_source));
 }
 
-// Builds an ObjectReadSource that contains the bytes (copied) from bytes_str.
 StatusOr<unique_ptr<ObjectReadSource>> BuildReadResponseFromStringNoSize(
     const string& bytes_str) {
-  // We want the following methods to be called in order, so make an InSequence.
-  InSequence seq;
   auto mock_source = make_unique<MockObjectReadSource>();
   EXPECT_CALL(*mock_source, IsOpen).WillRepeatedly(Return(true));
-  // Copy up to n bytes from input into buf.
+  EXPECT_CALL(*mock_source, Close)
+      .WillRepeatedly(Return(HttpResponse{200, {}, {}}));
+  auto offset = make_shared<size_t>(0);
   EXPECT_CALL(*mock_source, Read)
-      .WillOnce([bytes_str = bytes_str](void* buf, std::size_t n) {
-        BytesBuffer buffer(bytes_str.length());
-        buffer.bytes->assign(bytes_str.begin(), bytes_str.end());
-        buffer.length = bytes_str.length();
-        auto length = std::min(buffer.length, n);
-        std::memcpy(buf, buffer.bytes->data(), length);
-        ReadSourceResult result{length, HttpResponse{200, {}, {}}};
-
-        result.hashes.md5 = *CalculateMd5Hash(buffer);
-        result.hashes.md5 = *Base64Encode(result.hashes.md5);
-
-        result.size = absl::nullopt;
-        return result;
-      });
-  EXPECT_CALL(*mock_source, IsOpen).WillRepeatedly(Return(false));
+      .WillRepeatedly(
+          [bytes_str = bytes_str, offset](void* buf, std::size_t n) {
+            if (*offset >= bytes_str.length()) {
+              return ReadSourceResult{0, HttpResponse{200, {}, {}}};
+            }
+            BytesBuffer buffer(bytes_str.length());
+            buffer.bytes->assign(bytes_str.begin(), bytes_str.end());
+            buffer.length = bytes_str.length();
+            auto length = std::min(bytes_str.length() - *offset, n);
+            std::memcpy(buf, buffer.bytes->data() + *offset, length);
+            *offset += length;
+            ReadSourceResult result{length, HttpResponse{200, {}, {}}};
+            result.hashes.md5 = *CalculateMd5Hash(buffer);
+            result.hashes.md5 = *Base64Encode(result.hashes.md5);
+            result.size = absl::nullopt;
+            return result;
+          });
   return unique_ptr<ObjectReadSource>(std::move(mock_source));
+}
+
+google::cloud::storage::ObjectReadStream BuildReadStreamFromString(
+    const string& bytes_str) {
+  auto source = BuildReadResponseFromString(bytes_str);
+  return google::cloud::storage::ObjectReadStream(
+      make_unique<google::cloud::storage::internal::ObjectReadStreambuf>(
+          google::cloud::storage::internal::ReadObjectRangeRequest(),
+          std::move(*source)));
+}
+
+google::cloud::storage::ObjectReadStream BuildReadStreamFromStringNoSize(
+    const string& bytes_str) {
+  auto source = BuildReadResponseFromStringNoSize(bytes_str);
+  return google::cloud::storage::ObjectReadStream(
+      make_unique<google::cloud::storage::internal::ObjectReadStreambuf>(
+          google::cloud::storage::internal::ReadObjectRangeRequest(),
+          std::move(*source)));
 }
 
 TEST_P(GcpBlobStorageClientProviderStreamTest, GetBlobStream) {
@@ -358,9 +379,8 @@ TEST_P(GcpBlobStorageClientProviderStreamTest, GetBlobStream) {
   expected_response.mutable_byte_range()->set_begin_byte_index(0);
   expected_response.mutable_byte_range()->set_end_byte_index(14);
 
-  EXPECT_CALL(*mock_client_,
-              ReadObject(ReadObjectRequestEqual(kBucketName, kBlobName)))
-      .WillOnce(Return(ByMove(BuildReadResponseFromString(bytes_str))));
+  EXPECT_CALL(*mock_client_, ReadObject(kBucketName, kBlobName, _, _))
+      .WillOnce(Return(ByMove(BuildReadStreamFromString(bytes_str))));
 
   vector<GetBlobStreamResponse> actual_responses;
   get_blob_stream_context_.process_callback =
@@ -402,9 +422,8 @@ TEST_F(GcpBlobStorageClientProviderStreamTest, GetBlobStreamNoSizeReturned) {
   expected_response.mutable_byte_range()->set_begin_byte_index(0);
   expected_response.mutable_byte_range()->set_end_byte_index(14);
 
-  EXPECT_CALL(*mock_client_,
-              ReadObject(ReadObjectRequestEqual(kBucketName, kBlobName)))
-      .WillOnce(Return(ByMove(BuildReadResponseFromStringNoSize(bytes_str))));
+  EXPECT_CALL(*mock_client_, ReadObject(kBucketName, kBlobName, _, _))
+      .WillOnce(Return(ByMove(BuildReadStreamFromStringNoSize(bytes_str))));
 
   vector<GetBlobStreamResponse> actual_responses;
   get_blob_stream_context_.process_callback =
@@ -459,9 +478,8 @@ TEST_F(GcpBlobStorageClientProviderStreamTest, GetBlobStreamMultipleResponses) {
     expected_responses.push_back(resp);
   }
 
-  EXPECT_CALL(*mock_client_,
-              ReadObject(ReadObjectRequestEqual(kBucketName, kBlobName)))
-      .WillOnce(Return(ByMove(BuildReadResponseFromString(bytes_str))));
+  EXPECT_CALL(*mock_client_, ReadObject(kBucketName, kBlobName, _, _))
+      .WillOnce(Return(ByMove(BuildReadStreamFromString(bytes_str))));
 
   vector<GetBlobStreamResponse> actual_responses;
   get_blob_stream_context_.process_callback =
@@ -517,9 +535,8 @@ TEST_F(GcpBlobStorageClientProviderStreamTest, GetBlobStreamByteRange) {
   expected_responses.push_back(resp1);
   expected_responses.push_back(resp2);
 
-  EXPECT_CALL(*mock_client_,
-              ReadObject(ReadObjectRequestEqual(kBucketName, kBlobName)))
-      .WillOnce(Return(ByMove(BuildReadResponseFromString(bytes_str))));
+  EXPECT_CALL(*mock_client_, ReadObject(kBucketName, kBlobName, _, _, _))
+      .WillOnce(Return(ByMove(BuildReadStreamFromString(bytes_str))));
 
   vector<GetBlobStreamResponse> actual_responses;
   get_blob_stream_context_.process_callback =
@@ -556,9 +573,8 @@ TEST_F(GcpBlobStorageClientProviderStreamTest, GetBlobStreamFailsIfQueueDone) {
   // 15 chars.
   string bytes_str = "response_string";
 
-  EXPECT_CALL(*mock_client_,
-              ReadObject(ReadObjectRequestEqual(kBucketName, kBlobName)))
-      .WillOnce(Return(ByMove(BuildReadResponseFromString(bytes_str))));
+  EXPECT_CALL(*mock_client_, ReadObject(kBucketName, kBlobName, _, _))
+      .WillOnce(Return(ByMove(BuildReadStreamFromString(bytes_str))));
 
   get_blob_stream_context_.process_callback = [this](auto& context,
                                                      bool is_finish) {
@@ -585,9 +601,8 @@ TEST_F(GcpBlobStorageClientProviderStreamTest,
   // 15 chars.
   string bytes_str = "response_string";
 
-  EXPECT_CALL(*mock_client_,
-              ReadObject(ReadObjectRequestEqual(kBucketName, kBlobName)))
-      .WillOnce(Return(ByMove(BuildReadResponseFromString(bytes_str))));
+  EXPECT_CALL(*mock_client_, ReadObject(kBucketName, kBlobName, _, _))
+      .WillOnce(Return(ByMove(BuildReadStreamFromString(bytes_str))));
 
   get_blob_stream_context_.process_callback = [this](auto& context,
                                                      bool is_finish) {
@@ -652,55 +667,24 @@ MATCHER_P(HasSessionUrl, url, "") {
  * @param expect_queries Whether or not to expect RestoreResumableUpload's
  * before *each* UploadChunk call.
  */
-void ExpectResumableUpload(MockClient& mock_client, const string& bucket,
-                           const string& blob, const string& initial_part,
-                           const vector<string>& other_parts,
-                           bool expect_queries = false) {
+void ExpectResumableUpload(
+    MockGcpCloudStorageClient& mock_client,  // NOLINT(runtime/references)
+    const string& bucket, const string& blob, const string& initial_part,
+    const vector<string>& other_parts, bool expect_queries = false) {
   static int upload_count = 0;
   auto session_id = absl::StrFormat("session_%d", upload_count++);
   InSequence seq;
 
-  // First, create a session and upload the initial part.
-  uint64_t next_offset = initial_part.length();
-  EXPECT_CALL(mock_client, CreateResumableUpload(CreateResumableUploadEquals(
-                               ResumableUploadRequest(bucket, blob))))
-      .WillOnce(Return(CreateResumableUploadResponse{session_id}));
-
   EXPECT_CALL(
       mock_client,
-      UploadChunk(UploadChunkEquals(UploadChunkRequest(
-          session_id, 0, MakeBuffer(initial_part),
-          CreateHashFunction(Crc32cChecksumValue(), DisableCrc32cChecksum(true),
-                             MD5HashValue(), DisableMD5Hash(true))))))
-      .WillOnce(
-          Return(QueryResumableUploadResponse{next_offset, std::nullopt}));
-
-  // For each of the other parts, we expect to get another UploadChunk call.
-  for (auto it = other_parts.begin(); it != other_parts.end(); it++) {
-    if (expect_queries) {
-      EXPECT_CALL(mock_client, QueryResumableUpload(HasSessionUrl(session_id)))
-          .WillRepeatedly(
-              Return(QueryResumableUploadResponse{next_offset, std::nullopt}));
-    }
-    EXPECT_CALL(mock_client,
-                UploadChunk(UploadChunkEquals(UploadChunkRequest(
-                    session_id, next_offset, MakeBuffer(*it),
-                    CreateHashFunction(Crc32cChecksumValue(),
-                                       DisableCrc32cChecksum(true),
-                                       MD5HashValue(), DisableMD5Hash(true))))))
-        .WillOnce(Return(QueryResumableUploadResponse{
-            next_offset + it->length(), std::nullopt}));
-    next_offset += it->length();
-  }
-  // Finalization call - no body but should return ObjectMetadata.
-  EXPECT_CALL(
-      mock_client,
-      UploadChunk(UploadChunkEquals(UploadChunkRequest(
-          session_id, next_offset, EmptyBuffer(),
-          CreateHashFunction(Crc32cChecksumValue(), DisableCrc32cChecksum(true),
-                             MD5HashValue(), DisableMD5Hash(true))))))
-      .WillOnce(
-          Return(QueryResumableUploadResponse{next_offset, ObjectMetadata{}}));
+      WriteObject(
+          bucket, blob,
+          testing::An<google::cloud::storage::UseResumableUploadSession>()))
+      .WillRepeatedly([session_id](auto const&, auto const&, auto const&) {
+        return BuildObjectWriteStream(session_id);
+      });
+  EXPECT_CALL(mock_client, DeleteResumableUpload(session_id))
+      .WillRepeatedly(Return(Status()));
 }
 
 TEST_P(GcpBlobStorageClientProviderStreamTest, PutBlobStream) {
@@ -830,14 +814,18 @@ TEST_F(GcpBlobStorageClientProviderStreamTest,
   // No additional request objects.
   put_blob_stream_context_.MarkDone();
 
-  EXPECT_CALL(*mock_client_, CreateResumableUpload)
-      .WillOnce(Return(CreateResumableUploadResponse{"something"}));
-  EXPECT_CALL(*mock_client_, UploadChunk)
-      .WillOnce(Return(Status(CloudStatusCode::kUnauthenticated, "fail")));
+  EXPECT_CALL(
+      *mock_client_,
+      WriteObject(
+          kBucketName, kBlobName,
+          testing::An<google::cloud::storage::UseResumableUploadSession>()))
+      .WillOnce(Return(ByMove(BuildObjectWriteStreamFromStatus(
+          Status(CloudStatusCode::kUnauthenticated, "fail")))));
 
   put_blob_stream_context_.callback = [this](auto& context) {
     EXPECT_THAT(context.result,
-                ResultIs(FailureExecutionResult(SC_GCP_UNAUTHENTICATED)));
+                ResultIs(FailureExecutionResult(
+                    SC_BLOB_STORAGE_PROVIDER_UNRETRIABLE_ERROR)));
 
     finish_conditions_met_++;
   };
@@ -863,16 +851,18 @@ TEST_F(GcpBlobStorageClientProviderStreamTest,
   put_blob_stream_context_.TryPushRequest(*put_blob_stream_context_.request);
   put_blob_stream_context_.MarkDone();
 
-  EXPECT_CALL(*mock_client_, CreateResumableUpload)
-      .WillOnce(Return(CreateResumableUploadResponse{"something"}));
-  EXPECT_CALL(*mock_client_, UploadChunk)
-      .WillOnce(Return(
-          QueryResumableUploadResponse{bytes_str.length(), std::nullopt}))
-      .WillOnce(Return(Status(CloudStatusCode::kInvalidArgument, "fail")));
+  EXPECT_CALL(
+      *mock_client_,
+      WriteObject(
+          kBucketName, kBlobName,
+          testing::An<google::cloud::storage::UseResumableUploadSession>()))
+      .WillOnce(Return(ByMove(BuildObjectWriteStreamFromStatus(
+          Status(CloudStatusCode::kInvalidArgument, "fail")))));
 
   put_blob_stream_context_.callback = [this](auto& context) {
     EXPECT_THAT(context.result,
-                ResultIs(FailureExecutionResult(SC_GCP_INVALID_ARGUMENT)));
+                ResultIs(FailureExecutionResult(
+                    SC_BLOB_STORAGE_PROVIDER_UNRETRIABLE_ERROR)));
 
     finish_conditions_met_++;
   };
@@ -898,14 +888,13 @@ TEST_F(GcpBlobStorageClientProviderStreamTest,
   put_blob_stream_context_.TryPushRequest(*put_blob_stream_context_.request);
   put_blob_stream_context_.MarkDone();
 
-  EXPECT_CALL(*mock_client_, CreateResumableUpload)
-      .WillOnce(Return(CreateResumableUploadResponse{"something"}));
-  EXPECT_CALL(*mock_client_, UploadChunk)
-      .WillOnce(Return(
-          QueryResumableUploadResponse{bytes_str.length(), std::nullopt}))
-      .WillOnce(Return(
-          QueryResumableUploadResponse{bytes_str.length() * 2, std::nullopt}))
-      .WillOnce(Return(Status(CloudStatusCode::kInternal, "fail")));
+  EXPECT_CALL(
+      *mock_client_,
+      WriteObject(
+          kBucketName, kBlobName,
+          testing::An<google::cloud::storage::UseResumableUploadSession>()))
+      .WillOnce(Return(ByMove(BuildObjectWriteStreamFromStatus(
+          Status(CloudStatusCode::kInternal, "fail")))));
 
   put_blob_stream_context_.callback = [this](auto& context) {
     EXPECT_THAT(context.result, ResultIs(RetryExecutionResult(
@@ -936,14 +925,13 @@ TEST_F(GcpBlobStorageClientProviderStreamTest,
   put_blob_stream_context_.TryPushRequest(*put_blob_stream_context_.request);
   put_blob_stream_context_.MarkDone();
 
-  EXPECT_CALL(*mock_client_, CreateResumableUpload)
-      .WillOnce(Return(CreateResumableUploadResponse{"something"}));
-  EXPECT_CALL(*mock_client_, UploadChunk)
-      .WillOnce(Return(
-          QueryResumableUploadResponse{bytes_str.length(), std::nullopt}))
-      .WillOnce(Return(
-          QueryResumableUploadResponse{bytes_str.length() * 2, std::nullopt}))
-      .WillOnce(Return(Status(CloudStatusCode::kDataLoss, "fail")));
+  EXPECT_CALL(
+      *mock_client_,
+      WriteObject(
+          kBucketName, kBlobName,
+          testing::An<google::cloud::storage::UseResumableUploadSession>()))
+      .WillOnce(Return(ByMove(BuildObjectWriteStreamFromStatus(
+          Status(CloudStatusCode::kDataLoss, "fail")))));
 
   put_blob_stream_context_.callback = [this](auto& context) {
     EXPECT_THAT(context.result,
@@ -974,12 +962,14 @@ TEST_F(GcpBlobStorageClientProviderStreamTest,
   // Don't mark the context as done and don't enqueue any messages.
 
   InSequence seq;
-  EXPECT_CALL(*mock_client_, CreateResumableUpload)
-      .WillOnce(Return(CreateResumableUploadResponse{"something"}));
-  EXPECT_CALL(*mock_client_, UploadChunk)
-      .WillOnce(Return(
-          QueryResumableUploadResponse{bytes_str.length(), std::nullopt}));
-  EXPECT_CALL(*mock_client_, DeleteResumableUpload);
+  EXPECT_CALL(
+      *mock_client_,
+      WriteObject(
+          kBucketName, kBlobName,
+          testing::An<google::cloud::storage::UseResumableUploadSession>()))
+      .WillOnce(Return(ByMove(BuildObjectWriteStream("something"))));
+  EXPECT_CALL(*mock_client_, DeleteResumableUpload("something"))
+      .WillOnce(Return(Status()));
 
   put_blob_stream_context_.callback = [this](auto& context) {
     EXPECT_THAT(context.result,
@@ -1008,12 +998,15 @@ TEST_F(GcpBlobStorageClientProviderStreamTest, PutBlobStreamFailsIfCancelled) {
   // No additional request objects.
   put_blob_stream_context_.TryCancel();
 
-  EXPECT_CALL(*mock_client_, CreateResumableUpload)
-      .WillOnce(Return(CreateResumableUploadResponse{"something"}));
-  EXPECT_CALL(*mock_client_, UploadChunk)
-      .WillOnce(Return(
-          QueryResumableUploadResponse{bytes_str.length(), std::nullopt}));
-  EXPECT_CALL(*mock_client_, DeleteResumableUpload);
+  InSequence seq;
+  EXPECT_CALL(
+      *mock_client_,
+      WriteObject(
+          kBucketName, kBlobName,
+          testing::An<google::cloud::storage::UseResumableUploadSession>()))
+      .WillOnce(Return(ByMove(BuildObjectWriteStream("something"))));
+  EXPECT_CALL(*mock_client_, DeleteResumableUpload("something"))
+      .WillOnce(Return(Status()));
 
   put_blob_stream_context_.callback = [this](auto& context) {
     EXPECT_THAT(context.result,

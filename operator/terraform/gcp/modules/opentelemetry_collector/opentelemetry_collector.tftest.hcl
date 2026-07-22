@@ -33,6 +33,7 @@ variables {
   environment                      = "environment"
   project_id                       = ""
   network                          = ""
+  internet_tag_for_otel            = "egress-internet"
   subnet_id                        = ""
   region                           = ""
   user_provided_collector_sa_email = ""
@@ -295,5 +296,14 @@ run "creates_collector_autoscaler_per_zone" {
   assert {
     condition     = google_compute_autoscaler.collector_autoscalers["us-east1-c"].autoscaling_policy[0].cpu_utilization[0].target == 0.5
     error_message = "Wrong cpu utilization target for autoscaler"
+  }
+}
+
+run "verify_instance_template_tags" {
+  command = plan
+
+  assert {
+    condition     = contains(google_compute_instance_template.collector["us-central1"].tags, var.internet_tag_for_otel)
+    error_message = "Instance template tags do not contain the expected tag: ${var.internet_tag_for_otel}"
   }
 }

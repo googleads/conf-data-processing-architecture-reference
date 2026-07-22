@@ -14,33 +14,30 @@
  * limitations under the License.
  */
 
-#include "wrapped_key_handler_with_cache.h"
+#include "wrapped_key_handler_with_cache_base.h"
 
+#include <chrono>
 #include <memory>
 #include <optional>
 #include <shared_mutex>
 #include <string>
+#include <thread>
+#include <type_traits>
 #include <utility>
 
 #include "absl/base/no_destructor.h"
 #include "absl/container/flat_hash_set.h"
-#include "absl/strings/str_cat.h"
-#include "absl/strings/str_join.h"
-#include "absl/strings/strip.h"
-#include "cpio/common/src/common_error_codes.h"
+#include "core/interface/async_executor_interface.h"
+#include "public/core/interface/execution_result.h"
 #include "public/core/interface/execution_result_macros.h"
-#include "public/core/interface/execution_result_or_macros.h"
 #include "public/cpio/interface/error_codes.h"
 #include "public/cpio/utils/key_fetching/src/error_codes.h"
 #include "public/cpio/utils/key_fetching/src/key_fetching_metric_utils.h"
-#include "public/cpio/utils/key_fetching/src/wrapped_key_handler_with_cache_interface.h"
-#include "public/cpio/utils/metric_instance/interface/metric_instance_factory_interface.h"
-#include "public/cpio/utils/metric_instance/src/aggregate_metric.h"
-#include "public/cpio/utils/metric_instance/src/metric_utils.h"
 #include "public/cpio/utils/proto_utils.h"
 
 using google::cmrt::sdk::kms_service::v1::DecryptRequest;
 using google::cmrt::sdk::kms_service::v1::DecryptResponse;
+using google::cmrt::sdk::v1::AwsWrappedKey;
 using google::cmrt::sdk::v1::GcpWrappedKey;
 using google::scp::core::AsyncExecutorInterface;
 using google::scp::core::ExecutionResult;
@@ -56,19 +53,16 @@ using google::scp::core::errors::SC_CPIO_INVALID_ARGUMENT;
 using google::scp::core::errors::SC_CPIO_INVALID_CREDENTIALS;
 using google::scp::core::errors::SC_CPIO_KEY_FETCHER_FETCHING_TIMEOUT;
 using google::scp::core::errors::SC_CPIO_KEY_NOT_FOUND;
-using google::scp::core::errors::SC_CPIO_REQUEST_LIMIT_REACHED;
 using google::scp::core::errors::SC_PROTO_PARSING_FAILURE;
 using google::scp::cpio::DualWritingMetricClientInterface;
 using google::scp::cpio::KeyCacheStatus;
 using google::scp::cpio::KeyFetchingType;
-using google::scp::cpio::KeyType;
 using google::scp::cpio::KmsClientInterface;
 using google::scp::cpio::ProtoUtils;
 using google::scp::cpio::PushKeyCacheStatusMetric;
 using google::scp::cpio::PushKeyFetchingLatencyMetric;
 using google::scp::cpio::PushKeyFetchingRequestMetric;
 using google::scp::cpio::PushWrappedKeyFetchingErrorMetric;
-using google::scp::cpio::WrappedKeyHandlerOptions;
 using std::nullopt;
 using std::optional;
 using std::pair;
@@ -84,25 +78,15 @@ namespace google::scp::cpio {
 
 namespace {
 
-constexpr char kWrappedKeyHandlerWithCacheComponentName[] =
-    "WrappedKeyHandlerWithCache";
+constexpr char kWrappedKeyHandlerWithCacheBaseComponentName[] =
+    "WrappedKeyHandlerWithCacheBase";
 constexpr milliseconds kThreadSleepIntervalForKeyReady = milliseconds(5);
-constexpr char tinkKekGcpPrefix[] = "gcp-kms://";
 constexpr milliseconds kLogPeriod = milliseconds(1000);
-
-// Non-retryable key decryption errors
-const absl::flat_hash_set<StatusCode>& GetNonRetryableDecryptionErrors() {
-  static const absl::NoDestructor<absl::flat_hash_set<StatusCode>>
-      kNonRetryableDecryptionErrors(
-          {SC_CPIO_KEY_NOT_FOUND, SC_CPIO_ENTITY_NOT_FOUND,
-           SC_CPIO_INVALID_ARGUMENT, SC_PROTO_PARSING_FAILURE,
-           SC_CPIO_INTERNAL_ERROR, SC_CPIO_INVALID_CREDENTIALS});
-  return *kNonRetryableDecryptionErrors;
-}
 
 }  // namespace
 
-WrappedKeyHandlerWithCache::WrappedKeyHandlerWithCache(
+template <typename WrappedKeyType>
+WrappedKeyHandlerWithCacheBase<WrappedKeyType>::WrappedKeyHandlerWithCacheBase(
     shared_ptr<AsyncExecutorInterface>& async_executor,
     KmsClientInterface& kms_client,
     WrappedKeyHandlerOptions wrapped_key_handler_options,
@@ -127,37 +111,43 @@ WrappedKeyHandlerWithCache::WrappedKeyHandlerWithCache(
       wrapped_key_handler_options_(wrapped_key_handler_options),
       metric_client_(metric_client) {}
 
-ExecutionResult WrappedKeyHandlerWithCache::Init() noexcept {
+template <typename WrappedKeyType>
+ExecutionResult
+WrappedKeyHandlerWithCacheBase<WrappedKeyType>::Init() noexcept {
   RETURN_AND_LOG_IF_FAILURE(key_cache_.Init(),
-                            kWrappedKeyHandlerWithCacheComponentName, kZeroUuid,
-                            "Failed to init key_cache_.");
+                            kWrappedKeyHandlerWithCacheBaseComponentName,
+                            kZeroUuid, "Failed to init key_cache_.");
   RETURN_AND_LOG_IF_FAILURE(key_failure_cache_.Init(),
-                            kWrappedKeyHandlerWithCacheComponentName, kZeroUuid,
-                            "Failed to init key_failure_cache_.");
+                            kWrappedKeyHandlerWithCacheBaseComponentName,
+                            kZeroUuid, "Failed to init key_failure_cache_.");
   return SuccessExecutionResult();
 }
 
-ExecutionResult WrappedKeyHandlerWithCache::Run() noexcept {
+template <typename WrappedKeyType>
+ExecutionResult WrappedKeyHandlerWithCacheBase<WrappedKeyType>::Run() noexcept {
   RETURN_AND_LOG_IF_FAILURE(key_cache_.Run(),
-                            kWrappedKeyHandlerWithCacheComponentName, kZeroUuid,
-                            "Failed to run key_cache_.");
+                            kWrappedKeyHandlerWithCacheBaseComponentName,
+                            kZeroUuid, "Failed to run key_cache_.");
   RETURN_AND_LOG_IF_FAILURE(key_failure_cache_.Run(),
-                            kWrappedKeyHandlerWithCacheComponentName, kZeroUuid,
-                            "Failed to run key_failure_cache_.");
+                            kWrappedKeyHandlerWithCacheBaseComponentName,
+                            kZeroUuid, "Failed to run key_failure_cache_.");
   return SuccessExecutionResult();
 }
 
-ExecutionResult WrappedKeyHandlerWithCache::Stop() noexcept {
+template <typename WrappedKeyType>
+ExecutionResult
+WrappedKeyHandlerWithCacheBase<WrappedKeyType>::Stop() noexcept {
   RETURN_AND_LOG_IF_FAILURE(key_cache_.Stop(),
-                            kWrappedKeyHandlerWithCacheComponentName, kZeroUuid,
-                            "Failed to stop key_cache_.");
+                            kWrappedKeyHandlerWithCacheBaseComponentName,
+                            kZeroUuid, "Failed to stop key_cache_.");
   RETURN_AND_LOG_IF_FAILURE(key_failure_cache_.Stop(),
-                            kWrappedKeyHandlerWithCacheComponentName, kZeroUuid,
-                            "Failed to stop key_failure_cache_.");
+                            kWrappedKeyHandlerWithCacheBaseComponentName,
+                            kZeroUuid, "Failed to stop key_failure_cache_.");
   return SuccessExecutionResult();
 }
 
-void WrappedKeyHandlerWithCache::CacheValidKey(
+template <typename WrappedKeyType>
+void WrappedKeyHandlerWithCacheBase<WrappedKeyType>::CacheValidKey(
     const std::string& serialized_wrapped_key,
     const std::string& decrypted_dek) noexcept {
   std::string key;
@@ -166,9 +156,10 @@ void WrappedKeyHandlerWithCache::CacheValidKey(
   key_cache_.Insert(std::make_pair(serialized_wrapped_key, decrypted_dek), key);
 }
 
-void WrappedKeyHandlerWithCache::CacheFailureResultForWrappedKey(
-    std::string serialized_wrapped_key,
-    ExecutionResult failure_result) noexcept {
+template <typename WrappedKeyType>
+void WrappedKeyHandlerWithCacheBase<WrappedKeyType>::
+    CacheFailureResultForWrappedKey(std::string serialized_wrapped_key,
+                                    ExecutionResult failure_result) noexcept {
   // Remove the old failure result if one exists. Ignore the erase result.
   key_failure_cache_.Erase(serialized_wrapped_key);
   // Ignore the insert result if another thread already inserted it.
@@ -176,22 +167,38 @@ void WrappedKeyHandlerWithCache::CacheFailureResultForWrappedKey(
       std::make_pair(serialized_wrapped_key, failure_result), failure_result);
 }
 
-ExecutionResultOr<string>
-WrappedKeyHandlerWithCache::DecryptValidateAndCacheDecryptedDek(
-    const GcpWrappedKey& wrapped_key) noexcept {
-  SCP_INFO(kWrappedKeyHandlerWithCacheComponentName, kZeroUuid,
-           "Decrypt encrypted_dek from wrapped key (%s).",
-           ProtoUtils::TextProtoString(wrapped_key).c_str());
+template <typename WrappedKeyType>
+string WrappedKeyHandlerWithCacheBase<WrappedKeyType>::SerializeWrappedKey(
+    const WrappedKeyType& wrapped_key) noexcept {
+  return wrapped_key.SerializeAsString();
+}
 
-  DecryptRequest decrypt_request;
-  decrypt_request.set_ciphertext(wrapped_key.encrypted_dek());
-  decrypt_request.set_key_resource_name(wrapped_key.kek_uri());
-  decrypt_request.set_gcp_wip_provider(wrapped_key.wip_provider());
+template <typename WrappedKeyType>
+string WrappedKeyHandlerWithCacheBase<WrappedKeyType>::WrappedKeyToDebugString(
+    const WrappedKeyType& wrapped_key) noexcept {
+  return ProtoUtils::TextProtoString(wrapped_key);
+}
+
+template <typename WrappedKeyType>
+ExecutionResultOr<string> WrappedKeyHandlerWithCacheBase<WrappedKeyType>::
+    DecryptValidateAndCacheDecryptedDek(
+        const WrappedKeyType& wrapped_key) noexcept {
+  SCP_INFO(kWrappedKeyHandlerWithCacheBaseComponentName, kZeroUuid,
+           "Decrypt encrypted_dek from wrapped key (%s).",
+           WrappedKeyToDebugString(wrapped_key).c_str());
 
   // Log new wrapped key decryption metric using OpenTelemetry
-  PushKeyFetchingRequestMetric(metric_client_, KeyType::kGcpWrappedKey,
+  PushKeyFetchingRequestMetric(metric_client_, GetKeyType(),
                                KeyFetchingType::kOnDemand,
                                /*keyset_name=*/kDummyLabelValue);
+
+  auto decrypt_request_or = CreateDecryptRequest(wrapped_key);
+  if (!decrypt_request_or.Successful()) {
+    return ValidateAndCacheDecryptedDek(wrapped_key,
+                                        decrypt_request_or.result());
+  }
+  DecryptRequest decrypt_request = std::move(*decrypt_request_or);
+
   auto decryption_start_time_in_ns =
       TimeProvider::GetSteadyTimestampInNanosecondsAsClockTicks();
 
@@ -206,27 +213,29 @@ WrappedKeyHandlerWithCache::DecryptValidateAndCacheDecryptedDek(
           .count();
   // Log new wrapped key decryption latency metric using OpenTelemetry
   PushKeyFetchingLatencyMetric(
-      metric_client_, KeyType::kGcpWrappedKey, KeyFetchingType::kOnDemand,
+      metric_client_, GetKeyType(), KeyFetchingType::kOnDemand,
       /*keyset_name=*/kDummyLabelValue, latency_in_millis);
 
   return ValidateAndCacheDecryptedDek(wrapped_key, response_or);
 }
 
+template <typename WrappedKeyType>
 ExecutionResultOr<string>
-WrappedKeyHandlerWithCache::ValidateAndCacheDecryptedDek(
-    const GcpWrappedKey& wrapped_key, const ExecutionResultOr<DecryptResponse>&
-                                          decrypt_dek_response_or) noexcept {
-  auto serialized_wrapped_key = wrapped_key.SerializeAsString();
+WrappedKeyHandlerWithCacheBase<WrappedKeyType>::ValidateAndCacheDecryptedDek(
+    const WrappedKeyType& wrapped_key, const ExecutionResultOr<DecryptResponse>&
+                                           decrypt_dek_response_or) noexcept {
+  auto serialized_wrapped_key = SerializeWrappedKey(wrapped_key);
   if (!decrypt_dek_response_or.Successful()) {
-    SCP_ERROR_EVERY_PERIOD(kLogPeriod, kWrappedKeyHandlerWithCacheComponentName,
+    SCP_ERROR_EVERY_PERIOD(kLogPeriod,
+                           kWrappedKeyHandlerWithCacheBaseComponentName,
                            kZeroUuid, decrypt_dek_response_or.result(),
                            "Failed to get decrypted DEK for wrapped key (%s).",
-                           ProtoUtils::TextProtoString(wrapped_key).c_str());
+                           WrappedKeyToDebugString(wrapped_key).c_str());
     CacheFailureResultForWrappedKey(serialized_wrapped_key,
                                     decrypt_dek_response_or.result());
     // Log new wrapped key error metric using OpenTelemetry
     PushWrappedKeyFetchingErrorMetric(
-        metric_client_,
+        metric_client_, GetKeyType(),
         MapToWrappedKeyFetchingErrorString(decrypt_dek_response_or.result()));
 
     return decrypt_dek_response_or.result();
@@ -234,15 +243,16 @@ WrappedKeyHandlerWithCache::ValidateAndCacheDecryptedDek(
 
   if (decrypt_dek_response_or->plaintext().empty()) {
     auto failure_result = FailureExecutionResult(SC_CPIO_KEY_NOT_FOUND);
-    SCP_ERROR_EVERY_PERIOD(kLogPeriod, kWrappedKeyHandlerWithCacheComponentName,
-                           kZeroUuid,
-                           FailureExecutionResult(SC_CPIO_KEY_NOT_FOUND),
-                           "No decrypted DEK found for wrapped key (%s).",
-                           ProtoUtils::TextProtoString(wrapped_key).c_str());
+    SCP_ERROR_EVERY_PERIOD(
+        kLogPeriod, kWrappedKeyHandlerWithCacheBaseComponentName, kZeroUuid,
+        FailureExecutionResult(SC_CPIO_KEY_NOT_FOUND),
+        "No decrypted DEK found for wrapped key (%s).",
+        WrappedKeyToDebugString(wrapped_key).c_str());
     CacheFailureResultForWrappedKey(serialized_wrapped_key, failure_result);
     // Log new wrapped key error metric using OpenTelemetry
     PushWrappedKeyFetchingErrorMetric(
-        metric_client_, MapToWrappedKeyFetchingErrorString(failure_result));
+        metric_client_, GetKeyType(),
+        MapToWrappedKeyFetchingErrorString(failure_result));
     return failure_result;
   }
 
@@ -252,40 +262,37 @@ WrappedKeyHandlerWithCache::ValidateAndCacheDecryptedDek(
   return decrypted_dek;
 }
 
-ExecutionResultOr<string> WrappedKeyHandlerWithCache::GetKey(
-    const GcpWrappedKey& input_wrapped_key) noexcept {
-  GcpWrappedKey wrapped_key = input_wrapped_key;
-  // Sanitize kek_uri by removing tink prefix if present
-  wrapped_key.set_kek_uri(
-      absl::StripPrefix(input_wrapped_key.kek_uri(), tinkKekGcpPrefix));
-
-  auto serialized_wrapped_key = wrapped_key.SerializeAsString();
+template <typename WrappedKeyType>
+ExecutionResultOr<string>
+WrappedKeyHandlerWithCacheBase<WrappedKeyType>::GetKeyInternal(
+    const WrappedKeyType& input_wrapped_key) noexcept {
+  auto serialized_wrapped_key = SerializeWrappedKey(input_wrapped_key);
   auto decrypted_dek = GetDecryptedDekFromValidKeyCache(serialized_wrapped_key);
 
   if (decrypted_dek.has_value()) {
     // Log new key cache stats metric using OpenTelemetry.
-    PushKeyCacheStatusMetric(metric_client_, KeyType::kGcpWrappedKey,
+    PushKeyCacheStatusMetric(metric_client_, GetKeyType(),
                              /*keyset_name=*/kDummyLabelValue,
                              KeyCacheStatus::kValidKeyCacheHit);
     return decrypted_dek.value();
   }
-  auto failure_result = GetDecryptionFailureFromCache(wrapped_key);
+  auto failure_result = GetDecryptionFailureFromCache(input_wrapped_key);
   // Only return directly when the failure is not retryable.
   if (failure_result.has_value() &&
-      GetNonRetryableDecryptionErrors().contains(failure_result->status_code)) {
+      !IsRetryableDecryptionError(failure_result->status_code)) {
     // Log new key cache stats metric using OpenTelemetry
-    PushKeyCacheStatusMetric(metric_client_, KeyType::kGcpWrappedKey,
+    PushKeyCacheStatusMetric(metric_client_, GetKeyType(),
                              /*keyset_name=*/kDummyLabelValue,
                              KeyCacheStatus::kInvalidKeyCacheHit);
     return failure_result.value();
   }
   // Log new key cache stats metric using OpenTelemetry
-  PushKeyCacheStatusMetric(metric_client_, KeyType::kGcpWrappedKey,
+  PushKeyCacheStatusMetric(metric_client_, GetKeyType(),
                            /*keyset_name=*/kDummyLabelValue,
                            KeyCacheStatus::kValidKeyCacheMiss);
 
   if (!wrapped_key_handler_options_.enable_decryption_lock) {
-    return DecryptValidateAndCacheDecryptedDek(wrapped_key);
+    return DecryptValidateAndCacheDecryptedDek(input_wrapped_key);
   }
 
   if (!DecryptionInProgress(serialized_wrapped_key)) {
@@ -295,18 +302,18 @@ ExecutionResultOr<string> WrappedKeyHandlerWithCache::GetKey(
     if (decrypted_dek.has_value()) {
       return decrypted_dek.value();
     }
-    failure_result = GetDecryptionFailureFromCache(wrapped_key);
+    failure_result = GetDecryptionFailureFromCache(input_wrapped_key);
     // Only return directly when the failure is not retryable.
     if (failure_result.has_value() &&
-        GetNonRetryableDecryptionErrors().contains(
-            failure_result->status_code)) {
+        !IsRetryableDecryptionError(failure_result->status_code)) {
       return failure_result.value();
     }
 
     // Failing to mark IN_PROGRESS status means some other thread is already
     // decrypting the DEK. So it will fall to the WaitForKeyReady() process.
     if (MarkDecryptionInProgress(serialized_wrapped_key)) {
-      auto decrypted_dek_or = DecryptValidateAndCacheDecryptedDek(wrapped_key);
+      auto decrypted_dek_or =
+          DecryptValidateAndCacheDecryptedDek(input_wrapped_key);
       MarkDecryptionFinished(serialized_wrapped_key);
       return decrypted_dek_or;
     }
@@ -318,7 +325,7 @@ ExecutionResultOr<string> WrappedKeyHandlerWithCache::GetKey(
   if (decrypted_dek.has_value()) {
     return decrypted_dek.value();
   }
-  failure_result = GetDecryptionFailureFromCache(wrapped_key);
+  failure_result = GetDecryptionFailureFromCache(input_wrapped_key);
   // Another thread just finished decrypting the DEK and it is useless to retry
   // immediately, so we return directly.
   if (failure_result.has_value()) {
@@ -328,15 +335,17 @@ ExecutionResultOr<string> WrappedKeyHandlerWithCache::GetKey(
   // It means the waiting timeout when this happens.
   auto timeout_failure =
       FailureExecutionResult(SC_CPIO_KEY_FETCHER_FETCHING_TIMEOUT);
-  SCP_ERROR_EVERY_PERIOD(kLogPeriod, kWrappedKeyHandlerWithCacheComponentName,
-                         kZeroUuid, timeout_failure,
-                         "Failed to get decrypted DEK for wrapped key (%s).",
-                         ProtoUtils::TextProtoString(wrapped_key).c_str());
+  SCP_ERROR_EVERY_PERIOD(
+      kLogPeriod, kWrappedKeyHandlerWithCacheBaseComponentName, kZeroUuid,
+      timeout_failure, "Failed to get decrypted DEK for wrapped key (%s).",
+      WrappedKeyToDebugString(input_wrapped_key).c_str());
   return timeout_failure;
 }
 
-optional<string> WrappedKeyHandlerWithCache::GetDecryptedDekFromValidKeyCache(
-    const string& serialized_wrapped_key) noexcept {
+template <typename WrappedKeyType>
+optional<string> WrappedKeyHandlerWithCacheBase<WrappedKeyType>::
+    GetDecryptedDekFromValidKeyCache(
+        const string& serialized_wrapped_key) noexcept {
   if (!wrapped_key_handler_options_.enable_cache) {
     return nullopt;
   }
@@ -349,35 +358,38 @@ optional<string> WrappedKeyHandlerWithCache::GetDecryptedDekFromValidKeyCache(
   return nullopt;
 }
 
+template <typename WrappedKeyType>
 optional<ExecutionResult>
-WrappedKeyHandlerWithCache::GetDecryptionFailureFromCache(
-    const GcpWrappedKey& wrapped_key) noexcept {
+WrappedKeyHandlerWithCacheBase<WrappedKeyType>::GetDecryptionFailureFromCache(
+    const WrappedKeyType& wrapped_key) noexcept {
   if (!wrapped_key_handler_options_.enable_cache) {
     return nullopt;
   }
   ExecutionResult failure_result;
   auto is_key_found =
-      key_failure_cache_.Find(wrapped_key.SerializeAsString(), failure_result)
+      key_failure_cache_.Find(SerializeWrappedKey(wrapped_key), failure_result)
           .Successful();
   if (is_key_found) {
     SCP_ERROR_EVERY_PERIOD(
-        kLogPeriod, kWrappedKeyHandlerWithCacheComponentName, kZeroUuid,
+        kLogPeriod, kWrappedKeyHandlerWithCacheBaseComponentName, kZeroUuid,
         failure_result,
         "Successfully retrieved failure for key in invalid cache (%s).",
-        ProtoUtils::TextProtoString(wrapped_key).c_str());
+        WrappedKeyToDebugString(wrapped_key).c_str());
     return failure_result;
   }
   return nullopt;
 }
 
-void WrappedKeyHandlerWithCache::MarkDecryptionFinished(
+template <typename WrappedKeyType>
+void WrappedKeyHandlerWithCacheBase<WrappedKeyType>::MarkDecryptionFinished(
     const std::string& serialized_wrapped_key) noexcept {
   std::unique_lock lock(in_progress_key_cache_mutex_);
   in_progress_key_cache_.erase(serialized_wrapped_key);
   lock.unlock();
 }
 
-bool WrappedKeyHandlerWithCache::MarkDecryptionInProgress(
+template <typename WrappedKeyType>
+bool WrappedKeyHandlerWithCacheBase<WrappedKeyType>::MarkDecryptionInProgress(
     const std::string& serialized_wrapped_key) noexcept {
   std::unique_lock lock(in_progress_key_cache_mutex_);
   if (auto it = in_progress_key_cache_.find(serialized_wrapped_key);
@@ -391,7 +403,8 @@ bool WrappedKeyHandlerWithCache::MarkDecryptionInProgress(
   }
 }
 
-void WrappedKeyHandlerWithCache::WaitForKeyReady(
+template <typename WrappedKeyType>
+void WrappedKeyHandlerWithCacheBase<WrappedKeyType>::WaitForKeyReady(
     const std::string& serialized_wrapped_key) noexcept {
   auto start_time = system_clock::now();
   auto end_time = start_time;
@@ -403,7 +416,8 @@ void WrappedKeyHandlerWithCache::WaitForKeyReady(
   }
 }
 
-bool WrappedKeyHandlerWithCache::DecryptionInProgress(
+template <typename WrappedKeyType>
+bool WrappedKeyHandlerWithCacheBase<WrappedKeyType>::DecryptionInProgress(
     const std::string& serialized_wrapped_key) noexcept {
   bool in_progress = false;
   std::shared_lock lock(in_progress_key_cache_mutex_);
@@ -414,21 +428,7 @@ bool WrappedKeyHandlerWithCache::DecryptionInProgress(
   return in_progress;
 }
 
-std::string WrappedKeyHandlerWithCache::MapToWrappedKeyFetchingErrorString(
-    google::scp::core::ExecutionResult error_result) noexcept {
-  if (error_result.status_code == SC_CPIO_REQUEST_LIMIT_REACHED) {
-    return "ERROR_CODE_CUSTOMER_QUOTA_EXCEEDED";
-  }
-  if (error_result.status_code == SC_CPIO_INVALID_CREDENTIALS) {
-    return "ERROR_CODE_CUSTOMER_KEY_PERMISSION_DENIED";
-  }
-  if (error_result.status_code == SC_CPIO_KEY_NOT_FOUND ||
-      error_result.status_code == SC_CPIO_INTERNAL_ERROR ||
-      error_result.status_code == SC_CPIO_INVALID_ARGUMENT ||
-      error_result.status_code == SC_CPIO_ENTITY_NOT_FOUND) {
-    return "ERROR_CODE_INVALID_KEY_ID";
-  }
-  return "ERROR_CODE_KEY_FETCHING_ERROR";
-}
+template class WrappedKeyHandlerWithCacheBase<GcpWrappedKey>;
+template class WrappedKeyHandlerWithCacheBase<AwsWrappedKey>;
 
 }  // namespace google::scp::cpio

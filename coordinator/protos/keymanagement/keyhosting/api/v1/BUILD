@@ -22,7 +22,7 @@ proto_library(
     srcs = glob(["*.proto"]),
     deps = [
         "//coordinator/protos/keymanagement/shared/api/v1:proto",
-        "@tink_proto//proto:hpke_proto",
+        "@tink_cc//proto:hpke_proto",
     ],
 )
 

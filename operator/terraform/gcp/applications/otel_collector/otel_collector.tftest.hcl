@@ -30,13 +30,14 @@ mock_provider "google-beta" {
 # All run blocks should have "command = plan".
 # Take great care when writing tests with "command = apply".
 variables {
-  project_id          = "test-project"
-  environment         = "test-env"
-  region              = "us-central1"
-  region_zone         = "us-central1-a"
-  network             = "test-network"
-  collector_subnet_id = "test-collector-id"
-  proxy_subnet_id     = "test-proxy-id"
+  project_id            = "test-project"
+  environment           = "test-env"
+  region                = "us-central1"
+  region_zone           = "us-central1-a"
+  network               = "test-network"
+  internet_tag_for_otel = "egress-internet"
+  collector_subnet_id   = "test-collector-id"
+  proxy_subnet_id       = "test-proxy-id"
   subnets_per_region = {
     us-central1 = "test-collector-id",
     us-east1    = "test-collector-id-2"

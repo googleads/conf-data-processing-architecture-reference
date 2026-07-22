@@ -44,10 +44,10 @@ class WrappedKeyHandlerWithCacheInterface
  public:
   virtual ~WrappedKeyHandlerWithCacheInterface() = default;
 
-  /// @brief Obtain decrypted DEK corresponding to this Gcp Wrapped Key
+  /// @brief Obtain decrypted DEK corresponding to this Wrapped Key
   /// @return decrypted DEK as string or error.
   virtual google::scp::core::ExecutionResultOr<std::string> GetKey(
-      const google::cmrt::sdk::v1::GcpWrappedKey& wrapped_key) noexcept = 0;
+      const google::cmrt::sdk::v1::CloudWrappedKey& wrapped_key) noexcept = 0;
 };
 
 }  // namespace google::scp::cpio

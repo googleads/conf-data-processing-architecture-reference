@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#include "gcp_blob_storage_client_provider.h"
+#include "cpio/client_providers/blob_storage_client_provider/src/gcp/gcp_blob_storage_client_provider.h"
 
 #include <algorithm>
 #include <iostream>
@@ -24,9 +24,6 @@
 #include <string>
 #include <utility>
 #include <vector>
-
-#include <google/protobuf/io/coded_stream.h>
-#include <google/protobuf/util/time_util.h>
 
 #include "absl/strings/str_format.h"
 #include "cc/core/interface/configuration_keys.h"
@@ -38,16 +35,17 @@
 #include "core/interface/type_def.h"
 #include "core/utils/src/hashing.h"
 #include "cpio/client_providers/blob_storage_client_provider/src/common/error_codes.h"
+#include "cpio/client_providers/blob_storage_client_provider/src/gcp/gcp_blob_storage_client_utils.h"
 #include "cpio/client_providers/instance_client_provider/src/gcp/gcp_instance_client_utils.h"
 #include "google/cloud/options.h"
 #include "google/cloud/status_or.h"
 #include "google/cloud/storage/client.h"
 #include "google/cloud/storage/object_read_stream.h"
+#include "google/protobuf/io/coded_stream.h"
+#include "google/protobuf/util/time_util.h"
 #include "public/core/interface/execution_result_macros.h"
 #include "public/core/interface/execution_result_or_macros.h"
 #include "public/cpio/interface/blob_storage_client/type_def.h"
-
-#include "gcp_blob_storage_client_utils.h"
 
 using google::cloud::MakeExternalAccountCredentials;
 using google::cloud::Options;
@@ -269,7 +267,7 @@ void GcpBlobStorageClientProvider::GetBlobInternal(
     FinishContext(result, get_blob_context, cpu_async_executor_);
     return;
   }
-  Client cloud_storage_client(*(client_or.value()));
+  auto& cloud_storage_client = *(*client_or);
 
   ReadRange read_range;
   if (get_blob_context.request->has_byte_range()) {
@@ -284,6 +282,14 @@ void GcpBlobStorageClientProvider::GetBlobInternal(
       get_blob_context.request->blob_metadata().blob_name(),
       DisableCrc32cChecksum(true), EnableMD5Hash(), read_range);
   if (!ValidateStream(get_blob_context, blob_stream).Successful()) {
+    return;
+  }
+
+  if (!blob_stream.size().has_value()) {
+    auto execution_result =
+        GetConvertedFailureExecutionResult(google::cloud::Status(
+            google::cloud::StatusCode::kDataLoss, "Missing blob size"));
+    FinishContext(execution_result, get_blob_context, cpu_async_executor_);
     return;
   }
 
@@ -452,7 +458,7 @@ GcpBlobStorageClientProvider::InitGetBlobStreamTracker(
     FinishStreamingContext(result, context, cpu_async_executor_);
     return result;
   }
-  Client cloud_storage_client(*(client_or.value()));
+  auto& cloud_storage_client = *(*client_or);
 
   // Set up the tracker to the beginning.
   auto tracker = make_shared<GetBlobStreamTracker>();
@@ -561,7 +567,7 @@ GcpBlobStorageClientProvider::GetBlobStreamSync(
               "Failed creating Google Cloud Storage client.");
     return client_or.result();
   }
-  Client cloud_storage_client(*(client_or.value()));
+  auto& cloud_storage_client = *(*client_or);
 
   auto blob_stream =
       make_unique<ObjectReadStream>(cloud_storage_client.ReadObject(
@@ -627,7 +633,7 @@ void GcpBlobStorageClientProvider::ListBlobsMetadataInternal(
     FinishContext(result, list_blobs_context, cpu_async_executor_);
     return;
   }
-  Client cloud_storage_client(*(client_or.value()));
+  auto& cloud_storage_client = *(*client_or);
 
   auto objects_reader = [&request, &cloud_storage_client]() {
     auto prefix = request.blob_metadata().blob_name().empty()
@@ -730,7 +736,7 @@ void GcpBlobStorageClientProvider::PutBlobInternal(
     FinishContext(result, put_blob_context, cpu_async_executor_);
     return;
   }
-  Client cloud_storage_client(*(client_or.value()));
+  auto& cloud_storage_client = *(*client_or);
 
   string md5_hash = ComputeMD5Hash(request.blob().data());
   auto object_metadata = cloud_storage_client.InsertObject(
@@ -804,7 +810,7 @@ void GcpBlobStorageClientProvider::InitPutBlobStream(
                            cpu_async_executor_);
     return;
   }
-  Client cloud_storage_client(*(client_or.value()));
+  auto& cloud_storage_client = *(*client_or);
   const auto& request = *put_blob_stream_context.request;
   auto tracker = make_shared<PutBlobStreamTracker>();
   auto duration = request.has_stream_keepalive_duration()
@@ -838,7 +844,8 @@ void GcpBlobStorageClientProvider::InitPutBlobStream(
 }
 
 void GcpBlobStorageClientProvider::RestoreUploadIfSuspended(
-    PutBlobStreamTracker& tracker, Client& cloud_storage_client) noexcept {
+    PutBlobStreamTracker& tracker,
+    GcpCloudStorageClientInterface& cloud_storage_client) noexcept {
   if (tracker.session_id.has_value()) {
     // We suspended the upload previously, pick it up here.
     tracker.stream = cloud_storage_client.WriteObject(
@@ -866,7 +873,7 @@ void GcpBlobStorageClientProvider::PutBlobStreamInternal(
                            cpu_async_executor_);
     return;
   }
-  Client cloud_storage_client(*(client_or.value()));
+  auto& cloud_storage_client = *(*client_or);
 
   if (put_blob_stream_context.IsCancelled()) {
     RestoreUploadIfSuspended(*tracker, cloud_storage_client);
@@ -992,7 +999,7 @@ GcpBlobStorageClientProvider::PutBlobStreamSync(
               "Failed creating Google Cloud Storage client.");
     return client_or.result();
   }
-  Client cloud_storage_client(*(client_or.value()));
+  auto& cloud_storage_client = *(*client_or);
   auto stream = make_unique<ObjectWriteStream>(cloud_storage_client.WriteObject(
       blob_identity.blob_metadata().bucket_name(),
       blob_identity.blob_metadata().blob_name()));
@@ -1042,7 +1049,7 @@ void GcpBlobStorageClientProvider::DeleteBlobInternal(
     FinishContext(result, delete_blob_context, cpu_async_executor_);
     return;
   }
-  Client cloud_storage_client(*(client_or.value()));
+  auto& cloud_storage_client = *(*client_or);
 
   auto status = cloud_storage_client.DeleteObject(
       delete_blob_context.request->blob_metadata().bucket_name(),
@@ -1060,18 +1067,18 @@ void GcpBlobStorageClientProvider::DeleteBlobInternal(
                 cpu_async_executor_);
 }
 
-ExecutionResultOr<shared_ptr<Client>>
+ExecutionResultOr<shared_ptr<GcpCloudStorageClientInterface>>
 GcpBlobStorageClientProvider::GetOrCreateCloudStroageClient(
     CloudIdentityInfo cloud_identity_info) noexcept {
   if (cloud_identity_info.owner_id().empty()) {
     cloud_identity_info.set_owner_id(current_project_id_);
   }
   string cached_key = SerializeDeterministically(cloud_identity_info);
-  shared_ptr<Client> cached_client;
+  shared_ptr<GcpCloudStorageClientInterface> cached_client;
   auto execution_result =
       cloud_storage_client_pool_->Find(cached_key, cached_client);
   if (!execution_result.Successful()) {
-    ExecutionResultOr<shared_ptr<Client>> client_or;
+    ExecutionResultOr<shared_ptr<GcpCloudStorageClientInterface>> client_or;
     ASSIGN_OR_LOG_AND_RETURN(client_or,
                              cloud_storage_factory_->CreateClient(
                                  options_, cloud_identity_info.owner_id(),
@@ -1094,7 +1101,7 @@ GcpBlobStorageClientProvider::GetOrCreateCloudStroageClient(
 }
 
 void GcpBlobStorageClientProvider::OnBeforeGarbageCollection(
-    string& client_identity, shared_ptr<Client>& client,
+    string& client_identity, shared_ptr<GcpCloudStorageClientInterface>& client,
     function<void(bool)> should_delete_entry) noexcept {
   should_delete_entry(true);
 }
@@ -1130,11 +1137,12 @@ Options GcpCloudStorageFactory::CreateClientOptions(
   return client_options;
 }
 
-ExecutionResultOr<shared_ptr<Client>> GcpCloudStorageFactory::CreateClient(
+ExecutionResultOr<shared_ptr<GcpCloudStorageClientInterface>>
+GcpCloudStorageFactory::CreateClient(
     shared_ptr<BlobStorageClientOptions> options, const string& project_id,
     const string& wip_provider) noexcept {
-  return make_shared<Client>(
-      CreateClientOptions(options, project_id, wip_provider));
+  return make_shared<GcpCloudStorageClient>(
+      Client(CreateClientOptions(options, project_id, wip_provider)));
 }
 
 #ifndef TEST_CPIO

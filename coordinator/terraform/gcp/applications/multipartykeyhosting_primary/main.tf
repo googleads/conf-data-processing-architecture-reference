@@ -216,13 +216,15 @@ module "keygenerationservice" {
   key_generation_tee_restart_policy = var.key_generation_tee_restart_policy
 
   # Monitoring Args
-  alarms_enabled                  = var.alarms_enabled
-  keydb_instance_name             = module.keydb.keydb_instance_name
-  key_generation_alignment_period = var.key_generation_alignment_period
-  single_keyset_alignment_periods = var.key_generation_single_keyset_alignment_periods
-  create_alert_alignment_periods  = var.key_generation_create_alert_alignment_periods
-  undelivered_messages_threshold  = var.key_generation_undelivered_messages_threshold
-  key_generation_error_threshold  = var.key_generation_error_threshold
+  alarms_enabled                           = var.alarms_enabled
+  keydb_instance_name                      = module.keydb.keydb_instance_name
+  key_generation_alignment_period          = var.key_generation_alignment_period
+  single_keyset_alignment_periods          = var.key_generation_single_keyset_alignment_periods
+  create_alert_alignment_periods           = var.key_generation_create_alert_alignment_periods
+  undelivered_messages_threshold           = var.key_generation_undelivered_messages_threshold
+  key_generation_error_threshold           = var.key_generation_error_threshold
+  key_generation_precheck_error_threshold  = var.key_generation_precheck_error_threshold
+  key_generation_precheck_alignment_period = var.key_generation_precheck_alignment_period
 
   # An update to any of these variables will trigger the keygen instance for replacement.
   key_gen_secrets_hash = sha256(jsonencode({
@@ -283,8 +285,10 @@ module "public_key_service" {
   lb_outlier_detection_enforcing_consecutive_gateway_failure = var.public_key_service_lb_outlier_detection_enforcing_consecutive_gateway_failure
 
   # Cloud Armor
-  cloud_armor_enabled                                = var.public_key_service_cloud_armor_enabled
-  cloud_armor_preview_mode                           = var.public_key_service_cloud_armor_preview_mode
+  cloud_armor_enabled                    = var.public_key_service_cloud_armor_enabled
+  cloud_armor_enable_adaptive_protection = var.public_key_service_cloud_armor_enable_adaptive_protection
+  cloud_armor_preview_mode               = var.public_key_service_cloud_armor_preview_mode
+
   cloud_armor_rate_limit_count                       = var.public_key_service_cloud_armor_rate_limit_count
   cloud_armor_rate_limit_interval_sec                = var.public_key_service_cloud_armor_rate_limit_interval_sec
   cloud_armor_log_level                              = var.public_key_service_cloud_armor_log_level

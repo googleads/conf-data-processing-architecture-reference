@@ -654,13 +654,12 @@ bool OndemandKeyFetcherWithCache::FetchingInProgress(
 
 string OndemandKeyFetcherWithCache::MapToKeyFetchingErrorString(
     StatusCode status_code) noexcept {
-  // TODO: Switch the strings to CPIO error-ish strings.
   if (status_code == SC_CPIO_KEY_NOT_FOUND ||
       status_code == SC_CPIO_ENTITY_NOT_FOUND ||
       status_code == SC_CPIO_INVALID_ARGUMENT) {
-    return "ERROR_CODE_INVALID_KEY_ID";
+    return KeyFetchingErrorType::kInvalidKeyId;
   }
-  return "ERROR_CODE_KEY_FETCHING_ERROR";
+  return KeyFetchingErrorType::kGenericError;
 }
 
 }  // namespace google::scp::cpio

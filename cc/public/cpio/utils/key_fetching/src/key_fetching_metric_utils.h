@@ -54,6 +54,14 @@ struct PrefetchConfigValidationErrorType {
   static constexpr char kMissingValues[] = "MissingValues";
 };
 
+struct KeyFetchingErrorType {
+  static constexpr char kGenericError[] = "KeyFetchingError";
+  static constexpr char kInvalidKeyId[] = "InvalidKeyId";
+  static constexpr char kCustomerQuotaExceeded[] = "CustomerQuotaExceeded";
+  static constexpr char kCustomerKeyPermissionDenied[] =
+      "CustomerKeyPermissionDenied";
+};
+
 /////// Constants for KeyFetching metrics ///////
 // Metric names
 constexpr char kKeyFetchingErrorRateMetricName[] = "KeyFetchingErrorRate";
@@ -72,6 +80,7 @@ constexpr char kKeyAgeLabelName[] = "KeyAge";
 struct KeyType {
   static constexpr char kEncryptionKey[] = "EncryptionKey";
   static constexpr char kGcpWrappedKey[] = "GcpWrappedKey";
+  static constexpr char kAwsWrappedKey[] = "AwsWrappedKey";
   static constexpr char kSidKey[] = "SidKey";
   static constexpr char kKeysetMetadata[] = "KeysetMetadata";
 };
@@ -112,7 +121,7 @@ void PushKeyFetchingErrorMetric(DualWritingMetricClientInterface& metric_client,
                                 absl::string_view error_string);
 
 void PushWrappedKeyFetchingErrorMetric(
-    DualWritingMetricClientInterface& metric_client,
+    DualWritingMetricClientInterface& metric_client, absl::string_view key_type,
     absl::string_view error_string);
 
 void PushKeyFetchingRequestMetric(

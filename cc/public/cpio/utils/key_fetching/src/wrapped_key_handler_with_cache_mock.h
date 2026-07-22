@@ -51,7 +51,7 @@ class WrappedKeyHandlerWithCacheMock
               (noexcept, override));
 
   MOCK_METHOD(google::scp::core::ExecutionResultOr<std::string>, GetKey,
-              (const google::cmrt::sdk::v1::GcpWrappedKey&),
+              (const google::cmrt::sdk::v1::CloudWrappedKey&),
               (noexcept, override));
 };
 

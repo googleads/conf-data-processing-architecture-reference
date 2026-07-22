@@ -305,6 +305,25 @@ variable "location_new_key_ring" {
   nullable    = true
 }
 
+variable "key_generation_precheck_error_threshold" {
+  description = "Total key generation precheck errors greater than this to send alert."
+  type        = number
+}
+
+variable "key_generation_precheck_alignment_period" {
+  description = "Alignment period of key generation precheck alert metrics in seconds."
+  type        = number
+
+  validation {
+    # Used for the alignment period of alert metrics.
+    # Max 81,000 seconds due to the max GCP metric-threshold evaluation period
+    # (23 hours, 30 minutes) plus an extra hour to allow fluctuations in
+    # execution time.
+    condition     = var.key_generation_precheck_alignment_period > 0 && var.key_generation_precheck_alignment_period < 81000
+    error_message = "Must be greater than 0 and less than 81,000 seconds."
+  }
+}
+
 ################################################################################
 # Routing Variables.
 ################################################################################
@@ -667,6 +686,11 @@ variable "public_key_service_lb_outlier_detection_enforcing_consecutive_gateway_
 
 variable "public_key_service_cloud_armor_enabled" {
   description = "If true, creates and attaches the Cloud Armor security policy for the public key service."
+  type        = bool
+}
+
+variable "public_key_service_cloud_armor_enable_adaptive_protection" {
+  description = "Whether to enable Cloud Armor Adaptive Protection for Public Key Service."
   type        = bool
 }
 

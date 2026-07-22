@@ -44,6 +44,8 @@ cc_library(
 exports_files([
     "gcp_blob_storage_client_provider.h",
     "gcp_blob_storage_client_provider.cc",
+    "gcp_cloud_storage_client.h",
+    "gcp_cloud_storage_client.cc",
     "gcp_blob_storage_client_utils.h",
 ])
 
@@ -53,5 +55,7 @@ filegroup(
         ":gcp_blob_storage_client_provider.cc",
         ":gcp_blob_storage_client_provider.h",
         ":gcp_blob_storage_client_utils.h",
+        ":gcp_cloud_storage_client.cc",
+        ":gcp_cloud_storage_client.h",
     ],
 )

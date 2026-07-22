@@ -596,15 +596,4 @@ public class MultiPartyHybridEncryptionKeyServiceImplTest {
     verify(coordinatorAKeyFetchingService, times(1)).fetchEncryptionKey(any());
     verify(coordinatorBKeyFetchingService, times(1)).fetchEncryptionKey(any());
   }
-
-  @Test
-  public void params_BuildWithoutSettingOptionalFields() {
-    MultiPartyHybridEncryptionKeyServiceParams.builder()
-        .setCoordAKeyFetchingService(coordinatorAKeyFetchingService)
-        .setCoordBKeyFetchingService(coordinatorBKeyFetchingService)
-        .setCoordAAeadService(aeadServicePrimary)
-        .setCoordBAeadService(aeadServiceSecondary)
-        .setMetricClient(metricClient)
-        .build();
-  }
 }

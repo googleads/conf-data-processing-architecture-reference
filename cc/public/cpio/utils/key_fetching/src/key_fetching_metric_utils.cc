@@ -101,11 +101,11 @@ void PushKeyFetchingErrorMetric(DualWritingMetricClientInterface& metric_client,
 }
 
 void PushWrappedKeyFetchingErrorMetric(
-    DualWritingMetricClientInterface& metric_client,
+    DualWritingMetricClientInterface& metric_client, absl::string_view key_type,
     absl::string_view error_string) {
-  auto labels = CreateKeyFetcherMetricBaseLabels(
-      KeyType::kGcpWrappedKey, KeyFetchingType::kOnDemand,
-      /*keyset_name=*/kDummyLabelValue);
+  auto labels =
+      CreateKeyFetcherMetricBaseLabels(key_type, KeyFetchingType::kOnDemand,
+                                       /*keyset_name=*/kDummyLabelValue);
   labels[kErrorCodeLabelName] = error_string;
   auto metric =
       CreateMetric(kKeyFetchingErrorRateMetricName,

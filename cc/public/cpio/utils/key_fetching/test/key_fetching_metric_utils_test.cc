@@ -79,21 +79,21 @@ TEST(MetricUtilsTest, PushKeyFetchingErrorMetricTest) {
   auto key_fetching_type = KeyFetchingType::kAutoRefresh;
   EXPECT_CALL(mock_metric_client, PutOtelMetric(KeyFetchingErrorMetricEqual(
                                       key_type, key_fetching_type, keyset_name,
-                                      "ERROR_CODE_INVALID_KEY_ID")))
+                                      KeyFetchingErrorType::kInvalidKeyId)))
       .WillOnce(Return(SuccessExecutionResult()));
 
   PushKeyFetchingErrorMetric(mock_metric_client, key_type, key_fetching_type,
-                             keyset_name, "ERROR_CODE_INVALID_KEY_ID");
+                             keyset_name, KeyFetchingErrorType::kInvalidKeyId);
 
   key_type = KeyType::kEncryptionKey;
   key_fetching_type = KeyFetchingType::kOnDemand;
   EXPECT_CALL(mock_metric_client, PutOtelMetric(KeyFetchingErrorMetricEqual(
                                       key_type, key_fetching_type, keyset_name,
-                                      "ERROR_CODE_KEY_FETCHING_ERROR")))
+                                      KeyFetchingErrorType::kGenericError)))
       .WillOnce(Return(SuccessExecutionResult()));
 
   PushKeyFetchingErrorMetric(mock_metric_client, key_type, key_fetching_type,
-                             keyset_name, "ERROR_CODE_KEY_FETCHING_ERROR");
+                             keyset_name, KeyFetchingErrorType::kGenericError);
 }
 
 TEST(MetricUtilsTest, PushKeyFetchingRequestMetricTest) {

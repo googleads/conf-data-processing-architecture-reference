@@ -27,12 +27,14 @@
 #include "core/utils/src/base64.h"
 #include "core/utils/src/hashing.h"
 #include "cpio/client_providers/blob_storage_client_provider/src/common/error_codes.h"
+#include "cpio/client_providers/blob_storage_client_provider/src/gcp/gcp_cloud_storage_client.h"
 #include "cpio/client_providers/instance_client_provider/mock/mock_instance_client_provider.h"
+#include "google/cloud/internal/pagination_range.h"
 #include "google/cloud/status.h"
 #include "google/cloud/storage/client.h"
+#include "google/cloud/storage/internal/object_read_streambuf.h"
 #include "google/cloud/storage/internal/object_requests.h"
-#include "google/cloud/storage/testing/canonical_errors.h"
-#include "google/cloud/storage/testing/mock_client.h"
+#include "google/cloud/storage/internal/object_write_streambuf.h"
 #include "public/core/test/interface/execution_result_matchers.h"
 
 using google::cloud::Status;
@@ -56,10 +58,6 @@ using google::cloud::storage::internal::ListObjectsResponse;
 using google::cloud::storage::internal::ObjectReadSource;
 using google::cloud::storage::internal::ReadSourceResult;
 using google::cloud::storage::internal::ResumableUploadRequest;
-using google::cloud::storage::testing::ClientFromMock;
-using google::cloud::storage::testing::MockClient;
-using google::cloud::storage::testing::MockObjectReadSource;
-using ::google::cloud::storage::testing::canonical_errors::TransientError;
 using google::cmrt::sdk::blob_storage_service::v1::Blob;
 using google::cmrt::sdk::blob_storage_service::v1::BlobIdentity;
 using google::cmrt::sdk::blob_storage_service::v1::BlobMetadata;
@@ -96,6 +94,7 @@ using google::scp::core::test::ScpTestBase;
 using google::scp::core::test::WaitUntil;
 using google::scp::core::utils::Base64Encode;
 using google::scp::core::utils::CalculateMd5Hash;
+using google::scp::cpio::BlobStorageClientOptions;
 using google::scp::cpio::client_providers::GcpBlobStorageClientProvider;
 using google::scp::cpio::client_providers::GcpCloudStorageFactory;
 using google::scp::cpio::client_providers::mock::MockInstanceClientProvider;
@@ -138,15 +137,19 @@ constexpr seconds kCachedClientLifeTime = seconds(1);
 constexpr uint64_t kDefaultMaxPageSize = 1000;
 }  // namespace
 
-namespace google::scp::cpio::client_providers::test {
+#include "cpio/client_providers/blob_storage_client_provider/test/gcp/mock_gcp_cloud_storage_client.h"
 
-class MockGcpCloudStorageFactory : public GcpCloudStorageFactory {
- public:
-  MOCK_METHOD(core::ExecutionResultOr<shared_ptr<Client>>, CreateClient,
-              (shared_ptr<BlobStorageClientOptions>, const string&,
-               const string&),
-              (noexcept, override));
-};
+using google::scp::cpio::client_providers::mock::BuildListObjectsReader;
+using google::scp::cpio::client_providers::mock::
+    BuildListObjectsReaderFromStatus;
+using google::scp::cpio::client_providers::mock::BuildObjectWriteStream;
+using google::scp::cpio::client_providers::mock::BuildReadStreamFromStatus;
+using google::scp::cpio::client_providers::mock::BuildReadStreamFromString;
+using google::scp::cpio::client_providers::mock::MockGcpCloudStorageClient;
+using google::scp::cpio::client_providers::mock::MockGcpCloudStorageFactory;
+using google::scp::cpio::client_providers::mock::MockObjectReadSource;
+
+namespace google::scp::cpio::client_providers::test {
 
 class GcpBlobStorageClientProviderBaseTest {
  protected:
@@ -154,7 +157,7 @@ class GcpBlobStorageClientProviderBaseTest {
       : options_(make_shared<BlobStorageClientOptions>()),
         instance_client_(make_shared<MockInstanceClientProvider>()),
         storage_factory_(make_shared<NiceMock<MockGcpCloudStorageFactory>>()),
-        mock_gcs_client_(make_shared<NiceMock<MockClient>>()),
+        mock_gcs_client_(make_shared<NiceMock<MockGcpCloudStorageClient>>()),
         // We can't use mock executor for CPU calls because
         // AutoExpiryConcurrentMap in the GcpBlobStorageClient can only work
         // with real async executors.
@@ -164,8 +167,7 @@ class GcpBlobStorageClientProviderBaseTest {
             options_, instance_client_, real_cpu_async_executor_,
             make_shared<MockAsyncExecutor>(), storage_factory_) {
     ON_CALL(*storage_factory_, CreateClient)
-        .WillByDefault(
-            Return(make_shared<Client>(ClientFromMock(mock_gcs_client_))));
+        .WillByDefault(Return(mock_gcs_client_));
     options_->enable_new_gcp_error_code_converter = false;
     instance_client_->instance_resource_name = kInstanceResourceName;
     get_blob_context_.request = make_shared<GetBlobRequest>();
@@ -195,7 +197,7 @@ class GcpBlobStorageClientProviderBaseTest {
   shared_ptr<BlobStorageClientOptions> options_;
   shared_ptr<MockInstanceClientProvider> instance_client_;
   shared_ptr<MockGcpCloudStorageFactory> storage_factory_;
-  shared_ptr<MockClient> mock_gcs_client_;
+  shared_ptr<MockGcpCloudStorageClient> mock_gcs_client_;
   shared_ptr<AsyncExecutorInterface> real_cpu_async_executor_;
   GcpBlobStorageClientProvider gcp_blob_storage_client_;
 
@@ -228,7 +230,8 @@ class GcpBlobStorageClientProviderWithAttestationTest
       public GcpBlobStorageClientProviderBaseTest {
  protected:
   template <typename Context>
-  void MaybeExpectCreateClientCall(Context& context) {
+  void MaybeExpectCreateClientCall(
+      Context& context) {  // NOLINT(runtime/references)
     const auto& [owner_id, wip_provider] = GetParam();
     if (!owner_id.empty()) {
       context.request->mutable_cloud_identity_info()->set_owner_id(owner_id);
@@ -237,8 +240,7 @@ class GcpBlobStorageClientProviderWithAttestationTest
           ->mutable_gcp_attestation_info()
           ->set_wip_provider(wip_provider);
       EXPECT_CALL(*storage_factory_, CreateClient(_, owner_id, wip_provider))
-          .WillOnce(
-              Return(make_shared<Client>(ClientFromMock(mock_gcs_client_))));
+          .WillOnce(Return(mock_gcs_client_));
     }
   }
 };
@@ -276,27 +278,42 @@ TEST_F(GcpBlobStorageClientProviderTest, InvalidCachedClientLifetime) {
 // Builds an ObjectReadSource that contains the bytes (copied) from bytes_str.
 StatusOr<unique_ptr<ObjectReadSource>> BuildReadResponseFromString(
     const string& bytes_str) {
-  // We want the following methods to be called in order, so make an InSequence.
-  InSequence seq;
   auto mock_source = make_unique<MockObjectReadSource>();
-  EXPECT_CALL(*mock_source, IsOpen).WillRepeatedly(Return(true));
-  // Copy up to n bytes from input into buf.
+  auto offset = make_shared<size_t>(0);
+  EXPECT_CALL(*mock_source, IsOpen)
+      .WillRepeatedly(
+          [offset, length = bytes_str.length()]() { return *offset < length; });
+  EXPECT_CALL(*mock_source, Close)
+      .WillRepeatedly(Return(HttpResponse{200, {}, {}}));
   EXPECT_CALL(*mock_source, Read)
-      .WillOnce([bytes_str = bytes_str](void* buf, std::size_t n) {
-        BytesBuffer buffer(bytes_str.length());
-        buffer.bytes->assign(bytes_str.begin(), bytes_str.end());
-        buffer.length = bytes_str.length();
-        auto length = std::min(buffer.length, n);
-        std::memcpy(buf, buffer.bytes->data(), length);
-        ReadSourceResult result{length, HttpResponse{200, {}, {}}};
-
-        result.hashes.md5 = *CalculateMd5Hash(buffer);
-        result.hashes.md5 = *Base64Encode(result.hashes.md5);
-
-        result.size = length;
-        return result;
-      });
-  EXPECT_CALL(*mock_source, IsOpen).WillRepeatedly(Return(false));
+      .WillRepeatedly(
+          [bytes_str = bytes_str, offset](void* buf, std::size_t n) {
+            std::multimap<string, string> headers = {
+                {"x-goog-stored-content-length",
+                 std::to_string(bytes_str.length())},
+                {"content-length", std::to_string(bytes_str.length())}};
+            if (*offset >= bytes_str.length()) {
+              ReadSourceResult result{0, HttpResponse{200, {}, headers}};
+              BytesBuffer buffer(bytes_str.length());
+              buffer.bytes->assign(bytes_str.begin(), bytes_str.end());
+              buffer.length = bytes_str.length();
+              result.hashes.md5 = *CalculateMd5Hash(buffer);
+              result.hashes.md5 = *Base64Encode(result.hashes.md5);
+              result.size = bytes_str.length();
+              return result;
+            }
+            auto length = std::min(bytes_str.length() - *offset, n);
+            std::memcpy(buf, bytes_str.data() + *offset, length);
+            *offset += length;
+            ReadSourceResult result{length, HttpResponse{200, {}, headers}};
+            BytesBuffer buffer(bytes_str.length());
+            buffer.bytes->assign(bytes_str.begin(), bytes_str.end());
+            buffer.length = bytes_str.length();
+            result.hashes.md5 = *CalculateMd5Hash(buffer);
+            result.hashes.md5 = *Base64Encode(result.hashes.md5);
+            result.size = bytes_str.length();
+            return result;
+          });
   return unique_ptr<ObjectReadSource>(std::move(mock_source));
 }
 
@@ -348,9 +365,8 @@ TEST_P(GcpBlobStorageClientProviderWithAttestationTest, GetBlob) {
 
   string bytes_str = "response_string";
 
-  EXPECT_CALL(*mock_gcs_client_,
-              ReadObject(ReadObjectRequestEqual(kBucketName1, kBlobName1)))
-      .WillOnce(Return(ByMove(BuildReadResponseFromString(bytes_str))));
+  EXPECT_CALL(*mock_gcs_client_, ReadObject(kBucketName1, kBlobName1, _, _))
+      .WillOnce(Return(ByMove(BuildReadStreamFromString(bytes_str))));
 
   get_blob_context_.callback = [this, &bytes_str](auto& context) {
     EXPECT_SUCCESS(context.result);
@@ -399,10 +415,8 @@ TEST_P(GcpBlobStorageClientProviderTest, GetBlobWithByteRange) {
   get_blob_context_.request->mutable_byte_range()->set_end_byte_index(
       end_index);
 
-  EXPECT_CALL(*mock_gcs_client_,
-              ReadObject(ReadObjectRequestEqualsWithRange(
-                  kBucketName1, kBlobName1, begin_index, end_index + 1)))
-      .WillOnce(Return(ByMove(BuildReadResponseFromString(actual_str))));
+  EXPECT_CALL(*mock_gcs_client_, ReadObject(kBucketName1, kBlobName1, _, _, _))
+      .WillOnce(Return(ByMove(BuildReadStreamFromString(actual_str))));
 
   get_blob_context_.callback = [this,
                                 expected_str = expected_str](auto& context) {
@@ -435,9 +449,8 @@ TEST_P(GcpBlobStorageClientProviderWithAttestationTest, GetBlobStreamSync) {
 
   string bytes_str = "response_string";
 
-  EXPECT_CALL(*mock_gcs_client_,
-              ReadObject(ReadObjectRequestEqual(kBucketName1, kBlobName1)))
-      .WillOnce(Return(ByMove(BuildReadResponseFromString(bytes_str))));
+  EXPECT_CALL(*mock_gcs_client_, ReadObject(kBucketName1, kBlobName1, _, _))
+      .WillOnce(Return(ByMove(BuildReadStreamFromString(bytes_str))));
   auto result = gcp_blob_storage_client_.GetBlobStreamSync(blob_identity_);
 
   char output[256];
@@ -473,27 +486,55 @@ INSTANTIATE_TEST_SUITE_P(AttestationTest,
                              make_tuple(kOwnerId1, kWipProvider1)));
 
 StatusOr<unique_ptr<ObjectReadSource>> BuildBadHashReadResponse() {
-  // We want the following methods to be called in order, so make an
-  InSequence seq;
   auto mock_source = make_unique<MockObjectReadSource>();
-  EXPECT_CALL(*mock_source, IsOpen).WillRepeatedly(Return(true));
-  EXPECT_CALL(*mock_source, Read).WillOnce([](void* buf, std::size_t n) {
-    ReadSourceResult result{0, HttpResponse{200, {}, {}}};
-    result.hashes.md5 = "bad";
-    return result;
-  });
-  EXPECT_CALL(*mock_source, IsOpen).WillRepeatedly(Return(false));
+  auto offset = make_shared<size_t>(0);
+  string bytes_str = "0123456789";
+  EXPECT_CALL(*mock_source, IsOpen)
+      .WillRepeatedly(
+          [offset, length = bytes_str.length()]() { return *offset < length; });
+  EXPECT_CALL(*mock_source, Close)
+      .WillRepeatedly(Return(HttpResponse{200, {}, {}}));
+  EXPECT_CALL(*mock_source, Read)
+      .WillRepeatedly([bytes_str, offset](void* buf, std::size_t n) {
+        std::multimap<string, string> headers = {
+            {"x-goog-stored-content-length",
+             std::to_string(bytes_str.length())},
+            {"content-length", std::to_string(bytes_str.length())}};
+        if (*offset >= bytes_str.length()) {
+          ReadSourceResult result{0, HttpResponse{200, {}, headers}};
+          result.hashes.md5 = "1B2M2Y8AsgTpgAmY7PhCfg==";
+          result.size = bytes_str.length();
+          return result;
+        }
+        auto length = std::min(bytes_str.length() - *offset, n);
+        std::memcpy(buf, bytes_str.data() + *offset, length);
+        *offset += length;
+        ReadSourceResult result{length, HttpResponse{200, {}, headers}};
+        result.hashes.md5 = "1B2M2Y8AsgTpgAmY7PhCfg==";
+        result.size = bytes_str.length();
+        return result;
+      });
   return unique_ptr<ObjectReadSource>(std::move(mock_source));
 }
 
+google::cloud::storage::ObjectReadStream BuildBadHashReadStream() {
+  auto source = BuildBadHashReadResponse();
+  google::cloud::storage::internal::ReadObjectRangeRequest request;
+  request.set_option(google::cloud::storage::DisableCrc32cChecksum(true));
+  request.set_option(google::cloud::storage::DisableMD5Hash(false));
+  return google::cloud::storage::ObjectReadStream(
+      make_unique<google::cloud::storage::internal::ObjectReadStreambuf>(
+          std::move(request), std::move(*source)));
+}
+
 TEST_F(GcpBlobStorageClientProviderTest, GetBlobHashMismatchFails) {
+  options_->enable_new_gcp_error_code_converter = true;
   get_blob_context_.request->mutable_blob_metadata()->set_bucket_name(
       kBucketName1);
   get_blob_context_.request->mutable_blob_metadata()->set_blob_name(kBlobName1);
 
-  EXPECT_CALL(*mock_gcs_client_,
-              ReadObject(ReadObjectRequestEqual(kBucketName1, kBlobName1)))
-      .WillOnce(Return(ByMove(BuildBadHashReadResponse())));
+  EXPECT_CALL(*mock_gcs_client_, ReadObject(kBucketName1, kBlobName1, _, _))
+      .WillOnce(Return(ByMove(BuildBadHashReadStream())));
 
   get_blob_context_.callback = [this](auto& context) {
     EXPECT_THAT(context.result,
@@ -509,14 +550,14 @@ TEST_F(GcpBlobStorageClientProviderTest, GetBlobHashMismatchFails) {
 }
 
 TEST_F(GcpBlobStorageClientProviderTest, GetBlobNotFound) {
+  options_->enable_new_gcp_error_code_converter = true;
   get_blob_context_.request->mutable_blob_metadata()->set_bucket_name(
       kBucketName1);
   get_blob_context_.request->mutable_blob_metadata()->set_blob_name(kBlobName1);
 
-  EXPECT_CALL(*mock_gcs_client_,
-              ReadObject(ReadObjectRequestEqual(kBucketName1, kBlobName1)))
-      .WillOnce(
-          Return(ByMove(Status(CloudStatusCode::kNotFound, "Blob not found"))));
+  EXPECT_CALL(*mock_gcs_client_, ReadObject(kBucketName1, kBlobName1, _, _))
+      .WillOnce(Return(ByMove(BuildReadStreamFromStatus(
+          Status(CloudStatusCode::kNotFound, "Blob not found")))));
 
   get_blob_context_.callback = [this](auto& context) {
     EXPECT_THAT(context.result,
@@ -572,10 +613,10 @@ TEST_P(GcpBlobStorageClientProviderWithAttestationTest, ListBlobsNoPrefix) {
 
   MaybeExpectCreateClientCall(list_blobs_context_);
 
-  EXPECT_CALL(*mock_gcs_client_,
-              ListObjects(ListObjectsRequestEqualNoOffset(kBucketName1)))
-      .WillOnce(Return(ByMove(ListObjectsResponse::FromHttpResponse(
-          absl::StrFormat(R"""({
+  EXPECT_CALL(*mock_gcs_client_, ListObjects(kBucketName1, _, _))
+      .WillOnce(Return(
+          ByMove(BuildListObjectsReader(ListObjectsResponse::FromHttpResponse(
+              absl::StrFormat(R"""({
             "items": [
               {
                 "name": "%s"
@@ -585,7 +626,7 @@ TEST_P(GcpBlobStorageClientProviderWithAttestationTest, ListBlobsNoPrefix) {
               }
             ]
           })""",
-                          kBlobName1, kBlobName2)))));
+                              kBlobName1, kBlobName2))))));
 
   list_blobs_context_.callback = [this](auto& context) {
     EXPECT_SUCCESS(context.result);
@@ -650,11 +691,10 @@ TEST_F(GcpBlobStorageClientProviderTest, ListBlobsWithPrefix) {
       kBucketName1);
   list_blobs_context_.request->mutable_blob_metadata()->set_blob_name("blob_");
 
-  EXPECT_CALL(*mock_gcs_client_,
-              ListObjects(ListObjectsRequestEqualNoOffset(kBucketName1, "blob_",
-                                                          kDefaultMaxPageSize)))
-      .WillOnce(Return(ByMove(ListObjectsResponse::FromHttpResponse(
-          absl::StrFormat(R"""({
+  EXPECT_CALL(*mock_gcs_client_, ListObjects(kBucketName1, _, _))
+      .WillOnce(Return(
+          ByMove(BuildListObjectsReader(ListObjectsResponse::FromHttpResponse(
+              absl::StrFormat(R"""({
             "items": [
               {
                 "name": "%s"
@@ -664,7 +704,7 @@ TEST_F(GcpBlobStorageClientProviderTest, ListBlobsWithPrefix) {
               }
             ]
           })""",
-                          kBlobName1, kBlobName2)))));
+                              kBlobName1, kBlobName2))))));
 
   list_blobs_context_.callback = [this](auto& context) {
     EXPECT_SUCCESS(context.result);
@@ -727,18 +767,17 @@ TEST_F(GcpBlobStorageClientProviderTest, ListBlobsWithMarker) {
   list_blobs_context_.request->mutable_blob_metadata()->set_blob_name("blob_");
   list_blobs_context_.request->set_page_token(kBlobName1);
 
-  EXPECT_CALL(*mock_gcs_client_,
-              ListObjects(ListObjectsRequestEqualWithOffset(
-                  kBucketName1, "blob_", kDefaultMaxPageSize, kBlobName1)))
-      .WillOnce(Return(ByMove(
-          ListObjectsResponse::FromHttpResponse(absl::StrFormat(R"""({
+  EXPECT_CALL(*mock_gcs_client_, ListObjects(kBucketName1, _, _, _))
+      .WillOnce(Return(
+          ByMove(BuildListObjectsReader(ListObjectsResponse::FromHttpResponse(
+              absl::StrFormat(R"""({
             "items": [
               {
                 "name": "%s"
               }
             ]
           })""",
-                                                                kBlobName2)))));
+                              kBlobName2))))));
 
   list_blobs_context_.callback = [this](auto& context) {
     EXPECT_SUCCESS(context.result);
@@ -767,11 +806,10 @@ TEST_F(GcpBlobStorageClientProviderTest, ListBlobsWithMarkerSkipsFirstObject) {
   list_blobs_context_.request->mutable_blob_metadata()->set_blob_name("blob_");
   list_blobs_context_.request->set_page_token(kBlobName1);
 
-  EXPECT_CALL(*mock_gcs_client_,
-              ListObjects(ListObjectsRequestEqualWithOffset(
-                  kBucketName1, "blob_", kDefaultMaxPageSize, kBlobName1)))
-      .WillOnce(Return(ByMove(ListObjectsResponse::FromHttpResponse(
-          absl::StrFormat(R"""({
+  EXPECT_CALL(*mock_gcs_client_, ListObjects(kBucketName1, _, _, _))
+      .WillOnce(Return(
+          ByMove(BuildListObjectsReader(ListObjectsResponse::FromHttpResponse(
+              absl::StrFormat(R"""({
             "items": [
               {
                 "name": "%s"
@@ -781,7 +819,7 @@ TEST_F(GcpBlobStorageClientProviderTest, ListBlobsWithMarkerSkipsFirstObject) {
               }
             ]
           })""",
-                          kBlobName1, kBlobName2)))));
+                              kBlobName1, kBlobName2))))));
 
   list_blobs_context_.callback = [this](auto& context) {
     EXPECT_SUCCESS(context.result);
@@ -832,10 +870,10 @@ TEST_F(GcpBlobStorageClientProviderTest,
                           absl::StrCat("blob_", i));
   }
 
-  EXPECT_CALL(*mock_gcs_client_, ListObjects(ListObjectsRequestEqualNoOffset(
-                                     kBucketName1, "blob_", page_size)))
-      .WillOnce(Return(ByMove(ListObjectsResponse::FromHttpResponse(
-          absl::StrFormat(R"""({"items": [%s]})""", items_str)))));
+  EXPECT_CALL(*mock_gcs_client_, ListObjects(kBucketName1, _, _))
+      .WillOnce(Return(
+          ByMove(BuildListObjectsReader(ListObjectsResponse::FromHttpResponse(
+              absl::StrFormat(R"""({"items": [%s]})""", items_str))))));
 
   list_blobs_context_.callback = [this](auto& context) {
     EXPECT_SUCCESS(context.result);
@@ -868,11 +906,9 @@ TEST_F(GcpBlobStorageClientProviderTest, ListBlobsPropagatesFailure) {
       kBucketName1);
   list_blobs_context_.request->mutable_blob_metadata()->set_blob_name("blob_");
 
-  EXPECT_CALL(*mock_gcs_client_,
-              ListObjects(ListObjectsRequestEqualNoOffset(kBucketName1, "blob_",
-                                                          kDefaultMaxPageSize)))
-      .WillOnce(
-          Return(ByMove(Status(CloudStatusCode::kInvalidArgument, "error"))));
+  EXPECT_CALL(*mock_gcs_client_, ListObjects(kBucketName1, _, _))
+      .WillOnce(Return(ByMove(BuildListObjectsReaderFromStatus(
+          Status(CloudStatusCode::kInvalidArgument, "error")))));
 
   list_blobs_context_.callback = [this](auto& context) {
     EXPECT_THAT(context.result,
@@ -894,11 +930,9 @@ TEST_F(GcpBlobStorageClientProviderTest,
       kBucketName1);
   list_blobs_context_.request->mutable_blob_metadata()->set_blob_name("blob_");
 
-  EXPECT_CALL(*mock_gcs_client_,
-              ListObjects(ListObjectsRequestEqualNoOffset(kBucketName1, "blob_",
-                                                          kDefaultMaxPageSize)))
-      .WillOnce(
-          Return(ByMove(Status(CloudStatusCode::kInvalidArgument, "error"))));
+  EXPECT_CALL(*mock_gcs_client_, ListObjects(kBucketName1, _, _))
+      .WillOnce(Return(ByMove(BuildListObjectsReaderFromStatus(
+          Status(CloudStatusCode::kInvalidArgument, "error")))));
 
   list_blobs_context_.callback = [this](auto& context) {
     EXPECT_THAT(context.result,
@@ -958,7 +992,7 @@ TEST_P(GcpBlobStorageClientProviderWithAttestationTest, PutBlob) {
   expected_request.set_option(MD5HashValue(expected_md5_hash));
 
   EXPECT_CALL(*mock_gcs_client_,
-              InsertObjectMedia(InsertObjectRequestEquals(expected_request)))
+              InsertObject(kBucketName1, kBlobName1, bytes_str, _))
       .WillOnce(Return(ObjectMetadata()));
 
   put_blob_context_.callback = [this](auto& context) {
@@ -976,13 +1010,8 @@ TEST_P(GcpBlobStorageClientProviderWithAttestationTest, PutBlobStreamSync) {
   blob_identity_.mutable_blob_metadata()->set_bucket_name(kBucketName1);
   blob_identity_.mutable_blob_metadata()->set_blob_name(kBlobName1);
 
-  EXPECT_CALL(*mock_gcs_client_, CreateResumableUpload)
-      .WillOnce(Return(TransientError()))
-      .WillOnce([](ResumableUploadRequest const& r) {
-        EXPECT_EQ(kBucketName1, r.bucket_name());
-        EXPECT_EQ(kBlobName1, r.object_name());
-        return CreateResumableUploadResponse{"test-upload-id"};
-      });
+  EXPECT_CALL(*mock_gcs_client_, WriteObject(kBucketName1, kBlobName1))
+      .WillOnce(Return(ByMove(BuildObjectWriteStream())));
   auto result = gcp_blob_storage_client_.PutBlobStreamSync(blob_identity_);
   EXPECT_SUCCESS(result.result());
   result.value()->write("test_string", 128);
@@ -1007,7 +1036,7 @@ TEST_F(GcpBlobStorageClientProviderTest, PutBlobPropagatesFailure) {
   expected_request.set_option(MD5HashValue(expected_md5_hash));
 
   EXPECT_CALL(*mock_gcs_client_,
-              InsertObjectMedia(InsertObjectRequestEquals(expected_request)))
+              InsertObject(kBucketName1, kBlobName1, bytes_str, _))
       .WillOnce(Return(Status(CloudStatusCode::kOutOfRange, "failure")));
 
   put_blob_context_.callback = [this](auto& context) {
@@ -1043,7 +1072,7 @@ TEST_F(GcpBlobStorageClientProviderTest,
   expected_request.set_option(MD5HashValue(expected_md5_hash));
 
   EXPECT_CALL(*mock_gcs_client_,
-              InsertObjectMedia(InsertObjectRequestEquals(expected_request)))
+              InsertObject(kBucketName1, kBlobName1, bytes_str, _))
       .WillOnce(Return(Status(CloudStatusCode::kOutOfRange, "failure")));
 
   put_blob_context_.callback = [this](auto& context) {
@@ -1080,9 +1109,8 @@ TEST_P(GcpBlobStorageClientProviderWithAttestationTest, DeleteBlob) {
 
   MaybeExpectCreateClientCall(delete_blob_context_);
 
-  EXPECT_CALL(*mock_gcs_client_,
-              DeleteObject(DeleteObjectRequestEquals(kBucketName1, kBlobName1)))
-      .WillOnce(Return(EmptyResponse{}));
+  EXPECT_CALL(*mock_gcs_client_, DeleteObject(kBucketName1, kBlobName1))
+      .WillOnce(Return(Status()));
 
   delete_blob_context_.callback = [this](auto& context) {
     EXPECT_SUCCESS(context.result);
@@ -1104,9 +1132,8 @@ TEST_F(GcpBlobStorageClientProviderTest,
 
   string bytes_str = "response_string";
 
-  EXPECT_CALL(*mock_gcs_client_,
-              ReadObject(ReadObjectRequestEqual(kBucketName1, kBlobName1)))
-      .WillOnce(Return(ByMove(BuildReadResponseFromString(bytes_str))));
+  EXPECT_CALL(*mock_gcs_client_, ReadObject(kBucketName1, kBlobName1, _, _))
+      .WillOnce(Return(ByMove(BuildReadStreamFromString(bytes_str))));
 
   get_blob_context_.callback = [this](auto& context) {
     EXPECT_SUCCESS(context.result);
@@ -1133,7 +1160,7 @@ TEST_F(GcpBlobStorageClientProviderTest,
   expected_request.set_option(MD5HashValue(expected_md5_hash));
 
   EXPECT_CALL(*mock_gcs_client_,
-              InsertObjectMedia(InsertObjectRequestEquals(expected_request)))
+              InsertObject(kBucketName1, kBlobName1, bytes_str, _))
       .WillOnce(Return(ObjectMetadata()));
 
   put_blob_context_.callback = [this](auto& context) {
@@ -1148,8 +1175,10 @@ TEST_F(GcpBlobStorageClientProviderTest,
 
 TEST_F(GcpBlobStorageClientProviderTest,
        MulitpleOperationsWithDifferentAttenstations) {
-  auto mock_client_with_attestation_1 = make_shared<NiceMock<MockClient>>();
-  auto mock_client_with_attestation_2 = make_shared<NiceMock<MockClient>>();
+  auto mock_client_with_attestation_1 =
+      make_shared<NiceMock<MockGcpCloudStorageClient>>();
+  auto mock_client_with_attestation_2 =
+      make_shared<NiceMock<MockGcpCloudStorageClient>>();
 
   get_blob_context_.request->mutable_blob_metadata()->set_bucket_name(
       kBucketName1);
@@ -1161,18 +1190,17 @@ TEST_F(GcpBlobStorageClientProviderTest,
       ->mutable_gcp_attestation_info()
       ->set_wip_provider(kWipProvider1);
   EXPECT_CALL(*storage_factory_, CreateClient(_, kOwnerId1, kWipProvider1))
-      .WillOnce(Return(
-          make_shared<Client>(ClientFromMock(mock_client_with_attestation_1))));
+      .WillOnce(Return(mock_client_with_attestation_1));
   EXPECT_CALL(*storage_factory_, CreateClient(_, kOwnerId2, kWipProvider2))
       .Times(0);
 
   string bytes_str = "response_string";
 
   EXPECT_CALL(*mock_client_with_attestation_1,
-              ReadObject(ReadObjectRequestEqual(kBucketName1, kBlobName1)))
-      .WillOnce(Return(ByMove(BuildReadResponseFromString(bytes_str))));
+              ReadObject(kBucketName1, kBlobName1, _, _))
+      .WillOnce(Return(ByMove(BuildReadStreamFromString(bytes_str))));
   EXPECT_CALL(*mock_client_with_attestation_2,
-              ReadObject(ReadObjectRequestEqual(kBucketName1, kBlobName1)))
+              ReadObject(kBucketName1, kBlobName1, _, _))
       .Times(0);
 
   get_blob_context_.callback = [this](auto& context) {
@@ -1194,16 +1222,15 @@ TEST_F(GcpBlobStorageClientProviderTest,
       ->mutable_gcp_attestation_info()
       ->set_wip_provider(kWipProvider2);
   EXPECT_CALL(*storage_factory_, CreateClient(_, kOwnerId2, kWipProvider2))
-      .WillOnce(Return(
-          make_shared<Client>(ClientFromMock(mock_client_with_attestation_2))));
+      .WillOnce(Return(mock_client_with_attestation_2));
   EXPECT_CALL(*storage_factory_, CreateClient(_, kOwnerId1, kWipProvider1))
       .Times(0);
 
   EXPECT_CALL(*mock_client_with_attestation_2,
-              ReadObject(ReadObjectRequestEqual(kBucketName2, kBlobName2)))
-      .WillOnce(Return(ByMove(BuildReadResponseFromString(bytes_str))));
+              ReadObject(kBucketName2, kBlobName2, _, _))
+      .WillOnce(Return(ByMove(BuildReadStreamFromString(bytes_str))));
   EXPECT_CALL(*mock_client_with_attestation_1,
-              ReadObject(ReadObjectRequestEqual(kBucketName2, kBlobName2)))
+              ReadObject(kBucketName2, kBlobName2, _, _))
       .Times(0);
 
   get_blob_context_.callback = [this](auto& context) {
@@ -1238,10 +1265,10 @@ TEST_F(GcpBlobStorageClientProviderTest,
   expected_request.set_option(MD5HashValue(expected_md5_hash));
 
   EXPECT_CALL(*mock_client_with_attestation_1,
-              InsertObjectMedia(InsertObjectRequestEquals(expected_request)))
+              InsertObject(kBucketName1, kBlobName1, bytes_str, _))
       .WillOnce(Return(ObjectMetadata()));
   EXPECT_CALL(*mock_client_with_attestation_2,
-              InsertObjectMedia(InsertObjectRequestEquals(expected_request)))
+              InsertObject(kBucketName1, kBlobName1, bytes_str, _))
       .Times(0);
 
   put_blob_context_.callback = [this](auto& context) {
@@ -1292,8 +1319,7 @@ TEST_F(GcpBlobStorageClientProviderTest,
       options, instance_client_, cpu_async_executor,
       make_shared<MockAsyncExecutor>(), storage_factory_);
   ON_CALL(*storage_factory_, CreateClient)
-      .WillByDefault(
-          Return(make_shared<Client>(ClientFromMock(mock_gcs_client_))));
+      .WillByDefault(Return(mock_gcs_client_));
 
   EXPECT_SUCCESS(cpu_async_executor->Init());
   EXPECT_SUCCESS(cpu_async_executor->Run());
@@ -1311,16 +1337,16 @@ TEST_F(GcpBlobStorageClientProviderTest,
       ->mutable_gcp_attestation_info()
       ->set_wip_provider(kWipProvider1);
 
-  auto mock_client_with_attestation = make_shared<NiceMock<MockClient>>();
+  auto mock_client_with_attestation =
+      make_shared<NiceMock<MockGcpCloudStorageClient>>();
   EXPECT_CALL(*storage_factory_, CreateClient(_, kOwnerId1, kWipProvider1))
       .Times(2)
-      .WillRepeatedly(Return(
-          make_shared<Client>(ClientFromMock(mock_client_with_attestation))));
+      .WillRepeatedly(Return(mock_client_with_attestation));
 
   string bytes_str = "response_string";
   EXPECT_CALL(*mock_client_with_attestation,
-              ReadObject(ReadObjectRequestEqual(kBucketName1, kBlobName1)))
-      .WillOnce(Return(ByMove(BuildReadResponseFromString(bytes_str))));
+              ReadObject(kBucketName1, kBlobName1, _, _))
+      .WillOnce(Return(ByMove(BuildReadStreamFromString(bytes_str))));
 
   get_blob_context_.callback = [this](auto& context) {
     EXPECT_SUCCESS(context.result);
@@ -1339,8 +1365,8 @@ TEST_F(GcpBlobStorageClientProviderTest,
   get_blob_context_.request->mutable_blob_metadata()->set_blob_name(kBlobName2);
 
   EXPECT_CALL(*mock_client_with_attestation,
-              ReadObject(ReadObjectRequestEqual(kBucketName2, kBlobName2)))
-      .WillOnce(Return(ByMove(BuildReadResponseFromString(bytes_str))));
+              ReadObject(kBucketName2, kBlobName2, _, _))
+      .WillOnce(Return(ByMove(BuildReadStreamFromString(bytes_str))));
 
   gcs_client.GetBlob(get_blob_context_);
 

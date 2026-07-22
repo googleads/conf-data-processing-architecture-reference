@@ -45,18 +45,17 @@ bazel_dep(name = "grpc", version = "1.80.0", repo_name = "com_github_grpc_grpc")
 bazel_dep(name = "googleapis", version = "0.0.0-20260422-20ac242a", repo_name = "com_google_googleapis")
 bazel_dep(name = "rules_boost", version = "0.0.0", repo_name = "com_github_nelhage_rules_boost")
 
+# Short term fix for error when running `bazel mod graph`
+# TODO(b/532713366): Remove when grpc is updated to use this version of envoy_api or higher.
+single_version_override(
+    module_name = "envoy_api",
+    version = "0.0.0-20260130-84e8436",
+)
+
 single_version_override(
     module_name = "curl",
     patch_strip = 1,
     patches = ["//build_defs/cc/shared:curl_visibility.patch"],
-)
-
-# Needed because we use mock classes that have been moved out of the public
-# scope in newer versions of google_cloud_cpp.
-single_version_override(
-    module_name = "google_cloud_cpp",
-    patch_strip = 1,
-    patches = ["//build_defs/cc/shared:google_cloud_cpp_visibility.patch"],
 )
 
 archive_override(
@@ -235,15 +234,6 @@ use_repo(maven, "maven")
 
 http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 
-# Load tink-java but only for proto deps. Tink-java was chosen arbitrarily as
-# all tink repos have the protos.
-http_archive(
-    name = "tink_proto",
-    sha256 = "3c0a9d0217fd3dc68a618abe9ef718b7fc5751faf420e7bb388eb373d6f51da1",
-    strip_prefix = "tink-java-{}".format(TINK_JAVA_VERSION),
-    url = "https://github.com/tink-crypto/tink-java/archive/refs/tags/v{}.tar.gz".format(TINK_JAVA_VERSION),
-)
-
 oci = use_extension("@rules_oci//oci:extensions.bzl", "oci")
 oci.pull(
     name = "java_base_21_oci",
@@ -281,4 +271,14 @@ use_repo(
     cc_deps,
     "com_github_nghttp2_nghttp2",
     "com_google_farmhash",
+)
+
+http_archive(
+    name = "terraform",
+    build_file_content = """
+package(default_visibility = ["//visibility:public"])
+exports_files(["terraform"])
+""",
+    sha256 = "c71fd5d500a7e4d869bf5d12176c72d1dfc00440b862116797694361671f77c8",
+    url = "https://releases.hashicorp.com/terraform/1.12.0/terraform_1.12.0_linux_amd64.zip",
 )
