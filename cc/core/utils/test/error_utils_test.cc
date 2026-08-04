@@ -18,7 +18,9 @@
 
 #include "core/interface/errors.h"
 #include "core/interface/type_def.h"
+#include "core/utils/src/error_codes.h"
 #include "public/core/test/interface/execution_result_matchers.h"
+#include "public/cpio/interface/error_codes.h"
 
 using google::scp::core::FailureExecutionResult;
 using google::scp::core::RetryExecutionResult;
@@ -32,11 +34,36 @@ TEST(ErrorUtilsTest, ConvertSuccessExecutionResult) {
 
 TEST(ErrorUtilsTest, ConvertFailureExecutionResult) {
   FailureExecutionResult failure(SC_UNKNOWN);
-  EXPECT_THAT(ConvertToPublicExecutionResult(failure), ResultIs(failure));
+  EXPECT_THAT(ConvertToPublicExecutionResult(failure),
+              ResultIs(FailureExecutionResult(errors::SC_CPIO_UNKNOWN_ERROR)));
 }
 
 TEST(ErrorUtilsTest, ConvertRetryExecutionResult) {
-  RetryExecutionResult failure(SC_UNKNOWN);
+  RetryExecutionResult retry(SC_UNKNOWN);
+  EXPECT_THAT(ConvertToPublicExecutionResult(retry),
+              ResultIs(RetryExecutionResult(errors::SC_CPIO_UNKNOWN_ERROR)));
+}
+
+TEST(ErrorUtilsTest, ConvertUnmappedExecutionResult) {
+  uint64_t unmapped_error = 0x12345678;
+  FailureExecutionResult failure(unmapped_error);
   EXPECT_THAT(ConvertToPublicExecutionResult(failure), ResultIs(failure));
+}
+
+TEST(ErrorUtilsTest, ConvertCoreUtilsErrorCodes) {
+  FailureExecutionResult invalid_input(errors::SC_CORE_UTILS_INVALID_INPUT);
+  EXPECT_THAT(
+      ConvertToPublicExecutionResult(invalid_input),
+      ResultIs(FailureExecutionResult(errors::SC_CPIO_INVALID_ARGUMENT)));
+
+  FailureExecutionResult invalid_base64(
+      errors::SC_CORE_UTILS_INVALID_BASE64_ENCODING_LENGTH);
+  EXPECT_THAT(
+      ConvertToPublicExecutionResult(invalid_base64),
+      ResultIs(FailureExecutionResult(errors::SC_CPIO_INVALID_ARGUMENT)));
+
+  FailureExecutionResult curl_init_error(errors::SC_CORE_UTILS_CURL_INIT_ERROR);
+  EXPECT_THAT(ConvertToPublicExecutionResult(curl_init_error),
+              ResultIs(FailureExecutionResult(errors::SC_CPIO_INTERNAL_ERROR)));
 }
 }  // namespace google::scp::core::utils::test

@@ -94,7 +94,6 @@ cc_library(
         "//cc/public/cpio/utils/dual_writing_metric_client/interface:dual_writing_metric_client_interface",
         "//cc/public/cpio/utils/key_fetching/interface:key_fetcher_with_cache_interface",
         "//cc/public/cpio/utils/key_fetching/proto:key_coordinator_configuration_cc_proto",
-        "//cc/public/cpio/utils/metric_instance/src:metric_instance",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@com_google_protobuf//:protobuf",

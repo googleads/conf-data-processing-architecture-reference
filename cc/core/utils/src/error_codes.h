@@ -17,6 +17,8 @@
 #pragma once
 
 #include "core/interface/errors.h"
+#include "public/core/interface/execution_result.h"
+#include "public/cpio/interface/error_codes.h"
 
 namespace google::scp::core::errors {
 
@@ -32,5 +34,10 @@ DEFINE_ERROR_CODE(SC_CORE_UTILS_INVALID_BASE64_ENCODING_LENGTH, SC_CORE_UTILS,
 DEFINE_ERROR_CODE(SC_CORE_UTILS_CURL_INIT_ERROR, SC_CORE_UTILS, 0x0003,
                   "CURL cannot be initialized.",
                   HttpStatusCode::INTERNAL_SERVER_ERROR)
+
+MAP_TO_PUBLIC_ERROR_CODE(SC_CORE_UTILS_INVALID_INPUT, SC_CPIO_INVALID_ARGUMENT)
+MAP_TO_PUBLIC_ERROR_CODE(SC_CORE_UTILS_INVALID_BASE64_ENCODING_LENGTH,
+                         SC_CPIO_INVALID_ARGUMENT)
+MAP_TO_PUBLIC_ERROR_CODE(SC_CORE_UTILS_CURL_INIT_ERROR, SC_CPIO_INTERNAL_ERROR)
 
 }  // namespace google::scp::core::errors

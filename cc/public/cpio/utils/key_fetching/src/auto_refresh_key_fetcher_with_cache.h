@@ -167,10 +167,5 @@ class AutoRefreshKeyFetcherWithCache : public KeyFetcherWithCacheInterface {
   // The backfill days for the keyset, -1 means unfetched value.
   std::atomic<int> keyset_backfill_days_{-1};
 
-  MetricWrapper key_fetching_request_metric_;
-  MetricWrapper key_fetching_error_metric_;
-  MetricWrapper prefetch_retry_metric_;
-  MetricWrapper key_fetching_latency_metric_;
-  MetricWrapper key_cache_stats_metric_;
 };
 }  // namespace google::scp::cpio

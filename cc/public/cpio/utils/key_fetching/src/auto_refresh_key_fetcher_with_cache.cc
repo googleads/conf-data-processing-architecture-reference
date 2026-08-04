@@ -38,11 +38,7 @@
 #include "public/cpio/utils/key_fetching/src/error_codes.h"
 #include "public/cpio/utils/key_fetching/src/key_fetching_metric_utils.h"
 #include "public/cpio/utils/key_fetching/src/key_fetching_utils.h"
-#include "public/cpio/utils/metric_instance/src/metric_utils.h"
 
-using google::cmrt::sdk::metric_service::v1::MetricType;
-using google::cmrt::sdk::metric_service::v1::MetricUnit;
-using google::cmrt::sdk::metric_service::v1::PutMetricsRequest;
 using google::cmrt::sdk::private_key_service::v1::GetKeysetMetadataRequest;
 using google::cmrt::sdk::private_key_service::v1::GetKeysetMetadataResponse;
 using google::cmrt::sdk::private_key_service::v1::
@@ -70,8 +66,6 @@ using google::scp::cpio::DualWritingMetricClientInterface;
 using google::scp::cpio::KeyCacheStatus;
 using google::scp::cpio::KeyFetchingType;
 using google::scp::cpio::KeyType;
-using google::scp::cpio::MetricDefinition;
-using google::scp::cpio::MetricUtils;
 using google::scp::cpio::PrivateKeyClientInterface;
 using google::scp::cpio::PushKeyCacheStatusMetric;
 using google::scp::cpio::PushKeyFetchingErrorMetric;
@@ -96,13 +90,6 @@ namespace google::scp::cpio {
 namespace {
 constexpr char kAutoRefreshKeyFetcherWithCacheComponentName[] =
     "AutoRefreshKeyFetcherWithCache";
-constexpr char kKeyFetchingRequestMetricsName[] = "KeyFetchingRequest";
-constexpr char kKeyFetchingErrorMetricsName[] = "KeyFetchingError";
-constexpr char kKeyFetchingLegacyLatencyMetricName[] = "KeyFetchingLatencyInMs";
-constexpr char kPrefetchRetryCountMetricName[] = "PrefetchRetry";
-constexpr char kKeyCacheStatsMetricName[] = "KeyCacheStats";
-constexpr char kKeyCacheHit[] = "CacheHit";
-constexpr char kKeyCacheMiss[] = "CacheMiss";
 constexpr size_t kNetworkLatencyBufferInNanoseconds =
     duration_cast<nanoseconds>(seconds(60)).count();  // 60 seconds
 // Fetching keys that were active 12 hours earlier and caching them helps
@@ -187,107 +174,13 @@ AutoRefreshKeyFetcherWithCache::AutoRefreshKeyFetcherWithCache(
           key_fetcher_options.auto_refresh_time_duration.count()),
       metric_client_(metric_client),
       key_fetcher_options_(std::move(key_fetcher_options)),
-      key_fetching_status_(FetchingStatus::FINISHED) {
-  auto common_metric_labels =
-      MetricUtils::CreateMetricLabelsWithComponentSignature(
-          kAutoRefreshKeyFetcherWithCacheComponentName, keyset_name_);
-  auto key_fetching_request_metric_info = MetricDefinition(
-      kKeyFetchingRequestMetricsName, MetricUnit::METRIC_UNIT_COUNT,
-      metric_namespace, common_metric_labels);
-  key_fetching_request_metric_ = metric_client_.CreateAggregateMetric(
-      std::move(key_fetching_request_metric_info));
-
-  auto key_fetching_error_metric_info = MetricDefinition(
-      kKeyFetchingErrorMetricsName, MetricUnit::METRIC_UNIT_COUNT,
-      metric_namespace, common_metric_labels);
-  key_fetching_error_metric_ = metric_client_.CreateAggregateMetric(
-      std::move(key_fetching_error_metric_info));
-
-  auto key_fetching_latency_metric_info = MetricDefinition(
-      kKeyFetchingLegacyLatencyMetricName, MetricUnit::METRIC_UNIT_MILLISECONDS,
-      metric_namespace, common_metric_labels);
-  key_fetching_latency_metric_ = metric_client_.CreateTimeAggregateMetric(
-      std::move(key_fetching_latency_metric_info));
-  auto prefetch_retry_count_metric_info = MetricDefinition(
-      kPrefetchRetryCountMetricName, MetricUnit::METRIC_UNIT_COUNT,
-      metric_namespace, common_metric_labels);
-  prefetch_retry_metric_ = metric_client_.CreateAggregateMetric(
-      std::move(prefetch_retry_count_metric_info));
-
-  auto key_cache_stats_metric_info =
-      MetricDefinition(kKeyCacheStatsMetricName, MetricUnit::METRIC_UNIT_COUNT,
-                       metric_namespace, common_metric_labels);
-  key_cache_stats_metric_ = metric_client_.CreateAggregateMetric(
-      std::move(key_cache_stats_metric_info), {kKeyCacheHit, kKeyCacheMiss});
-}
+      key_fetching_status_(FetchingStatus::FINISHED) {}
 
 core::ExecutionResult AutoRefreshKeyFetcherWithCache::Init() noexcept {
-  RETURN_AND_LOG_IF_FAILURE(
-      metric_client_.InitMetric(kKeyFetchingRequestMetricsName,
-                                kAutoRefreshKeyFetcherWithCacheComponentName,
-                                keyset_name_),
-      kAutoRefreshKeyFetcherWithCacheComponentName, kZeroUuid,
-      "Failed to init key_fetching_request_metric_.");
-  RETURN_AND_LOG_IF_FAILURE(
-      metric_client_.InitMetric(kKeyFetchingErrorMetricsName,
-                                kAutoRefreshKeyFetcherWithCacheComponentName,
-                                keyset_name_),
-      kAutoRefreshKeyFetcherWithCacheComponentName, kZeroUuid,
-      "Failed to init key_fetching_error_metric_.");
-  RETURN_AND_LOG_IF_FAILURE(
-      metric_client_.InitMetric(kKeyFetchingLegacyLatencyMetricName,
-                                kAutoRefreshKeyFetcherWithCacheComponentName,
-                                keyset_name_),
-      kAutoRefreshKeyFetcherWithCacheComponentName, kZeroUuid,
-      "Failed to init key_fetching_latency_metric_.");
-  RETURN_AND_LOG_IF_FAILURE(
-      metric_client_.InitMetric(kPrefetchRetryCountMetricName,
-                                kAutoRefreshKeyFetcherWithCacheComponentName,
-                                keyset_name_),
-      kAutoRefreshKeyFetcherWithCacheComponentName, kZeroUuid,
-      "Failed to init prefetch_retry_metric_.");
-  RETURN_AND_LOG_IF_FAILURE(
-      metric_client_.InitMetric(kKeyCacheStatsMetricName,
-                                kAutoRefreshKeyFetcherWithCacheComponentName,
-                                keyset_name_),
-      kAutoRefreshKeyFetcherWithCacheComponentName, kZeroUuid,
-      "Failed to init key_cache_stats_metric_.");
-
   return SuccessExecutionResult();
 }
 
 core::ExecutionResult AutoRefreshKeyFetcherWithCache::Run() noexcept {
-  RETURN_AND_LOG_IF_FAILURE(
-      metric_client_.RunMetric(kKeyFetchingRequestMetricsName,
-                               kAutoRefreshKeyFetcherWithCacheComponentName,
-                               keyset_name_),
-      kAutoRefreshKeyFetcherWithCacheComponentName, kZeroUuid,
-      "Failed to Run key_fetching_request_metric_.");
-  RETURN_AND_LOG_IF_FAILURE(
-      metric_client_.RunMetric(kKeyFetchingErrorMetricsName,
-                               kAutoRefreshKeyFetcherWithCacheComponentName,
-                               keyset_name_),
-      kAutoRefreshKeyFetcherWithCacheComponentName, kZeroUuid,
-      "Failed to Run key_fetching_error_metric_.");
-  RETURN_AND_LOG_IF_FAILURE(
-      metric_client_.RunMetric(kKeyFetchingLegacyLatencyMetricName,
-                               kAutoRefreshKeyFetcherWithCacheComponentName,
-                               keyset_name_),
-      kAutoRefreshKeyFetcherWithCacheComponentName, kZeroUuid,
-      "Failed to Run key_fetching_latency_metric_.");
-  RETURN_AND_LOG_IF_FAILURE(
-      metric_client_.RunMetric(kPrefetchRetryCountMetricName,
-                               kAutoRefreshKeyFetcherWithCacheComponentName,
-                               keyset_name_),
-      kAutoRefreshKeyFetcherWithCacheComponentName, kZeroUuid,
-      "Failed to Run prefetch_retry_metric_.");
-  RETURN_AND_LOG_IF_FAILURE(
-      metric_client_.RunMetric(kKeyCacheStatsMetricName,
-                               kAutoRefreshKeyFetcherWithCacheComponentName,
-                               keyset_name_),
-      kAutoRefreshKeyFetcherWithCacheComponentName, kZeroUuid,
-      "Failed to Run key_cache_stats_metric_.");
-
   // Try to fetch keyset metadata for all SID keysets as KS confirmed that all
   // keysets are ready.
   FetchAndCacheKeysetMetadataRemote(KeyFetchingType::kPrefetch);
@@ -311,10 +204,6 @@ core::ExecutionResult AutoRefreshKeyFetcherWithCache::Run() noexcept {
       sleep_duration =
           milliseconds(distribution(random_generator) % max_delay_ms);
       sleep_for(sleep_duration);
-      LOG_IF_FAILURE(
-          metric_client_.PutMetric(prefetch_retry_metric_.Increment()),
-          kAutoRefreshKeyFetcherWithCacheComponentName, kZeroUuid,
-          "Failed to put metric");
       LOG_IF_FAILURE(
           TryFetchAndCacheKeys(KeyFetchingType::kPrefetchRetry).result(),
           kAutoRefreshKeyFetcherWithCacheComponentName, kZeroUuid,
@@ -340,47 +229,12 @@ core::ExecutionResult AutoRefreshKeyFetcherWithCache::Stop() noexcept {
     refresh_thread_.join();
   }
 
-  RETURN_AND_LOG_IF_FAILURE(
-      metric_client_.StopMetric(kKeyFetchingRequestMetricsName,
-                                kAutoRefreshKeyFetcherWithCacheComponentName,
-                                keyset_name_),
-      kAutoRefreshKeyFetcherWithCacheComponentName, kZeroUuid,
-      "Failed to Stop key_fetching_request_metric_.");
-  RETURN_AND_LOG_IF_FAILURE(
-      metric_client_.StopMetric(kKeyFetchingErrorMetricsName,
-                                kAutoRefreshKeyFetcherWithCacheComponentName,
-                                keyset_name_),
-      kAutoRefreshKeyFetcherWithCacheComponentName, kZeroUuid,
-      "Failed to Stop key_fetching_error_metric_.");
-  RETURN_AND_LOG_IF_FAILURE(
-      metric_client_.StopMetric(kKeyFetchingLegacyLatencyMetricName,
-                                kAutoRefreshKeyFetcherWithCacheComponentName,
-                                keyset_name_),
-      kAutoRefreshKeyFetcherWithCacheComponentName, kZeroUuid,
-      "Failed to Stop key_fetching_latency_metric_.");
-  RETURN_AND_LOG_IF_FAILURE(
-      metric_client_.StopMetric(kPrefetchRetryCountMetricName,
-                                kAutoRefreshKeyFetcherWithCacheComponentName,
-                                keyset_name_),
-      kAutoRefreshKeyFetcherWithCacheComponentName, kZeroUuid,
-      "Failed to Stop prefetch_retry_metric_.");
-  RETURN_AND_LOG_IF_FAILURE(
-      metric_client_.StopMetric(kKeyCacheStatsMetricName,
-                                kAutoRefreshKeyFetcherWithCacheComponentName,
-                                keyset_name_),
-      kAutoRefreshKeyFetcherWithCacheComponentName, kZeroUuid,
-      "Failed to Stop key_cache_stats_metric_.");
   return SuccessExecutionResult();
 }
 
 core::ExecutionResultOr<ListActiveEncryptionKeysResponse>
 AutoRefreshKeyFetcherWithCache::FetchKeysFromRemoteWithActiveKeysApi(
     absl::string_view key_fetching_type) noexcept {
-  LOG_IF_FAILURE(
-      metric_client_.PutMetric(key_fetching_request_metric_.Increment()),
-      kAutoRefreshKeyFetcherWithCacheComponentName, kZeroUuid,
-      "Failed to put metric");
-
   // Log new key fetching request metric using OpenTelemetry
   PushKeyFetchingRequestMetric(metric_client_, KeyType::kSidKey,
                                key_fetching_type, keyset_name_);
@@ -397,11 +251,6 @@ AutoRefreshKeyFetcherWithCache::FetchKeysFromRemoteWithActiveKeysApi(
       TimeProvider::GetSteadyTimestampInNanosecondsAsClockTicks();
   auto latency_in_millis =
       (fetching_end_time_in_ns - fetching_start_time_in_ns) / 1000000.0;
-  LOG_IF_FAILURE(
-      metric_client_.PutMetric(key_fetching_latency_metric_.WithValue(
-          absl::StrCat(latency_in_millis))),
-      kAutoRefreshKeyFetcherWithCacheComponentName, kZeroUuid,
-      "Failed to put metric");
 
   // Log new key fetching latency metric using OpenTelemetry
   PushKeyFetchingLatencyMetric(metric_client_, KeyType::kSidKey,
@@ -420,11 +269,6 @@ AutoRefreshKeyFetcherWithCache::FetchKeysFromRemoteWithActiveKeysApi(
   SCP_ERROR(kAutoRefreshKeyFetcherWithCacheComponentName, kZeroUuid,
             fetching_result, "SID key refresh failed for keyset %s",
             keyset_name_.c_str());
-
-  LOG_IF_FAILURE(
-      metric_client_.PutMetric(key_fetching_error_metric_.Increment()),
-      kAutoRefreshKeyFetcherWithCacheComponentName, kZeroUuid,
-      "Failed to put metric");
 
   // Log new key fetching error metric using OpenTelemetry
   PushKeyFetchingErrorMetric(
@@ -537,11 +381,6 @@ AutoRefreshKeyFetcherWithCache::GetValidKeys(
   }
 
   auto keys_in_cache = GetKeysFromCache(key_selection_timestamp_ns);
-  LOG_IF_FAILURE(
-      metric_client_.PutMetric(key_cache_stats_metric_.Increment(
-          1, keys_in_cache.Successful() ? kKeyCacheHit : kKeyCacheMiss)),
-      kAutoRefreshKeyFetcherWithCacheComponentName, kZeroUuid,
-      "Failed to put metric");
 
   // Log new key cache stats metric using OpenTelemetry
   PushKeyCacheStatusMetric(metric_client_, KeyType::kSidKey, keyset_name_,

@@ -35,6 +35,7 @@ cc_library(
         "//cc/core/interface:interface_lib",
         "//cc/core/interface:type_def_lib",
         "//cc/public/core/interface:execution_result",
+        "//cc/public/cpio/interface:cpio_errors",
         "@boringssl//:crypto",
         "@com_github_curl_curl//:curl",
         "@com_google_absl//absl/strings",
