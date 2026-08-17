@@ -16,9 +16,13 @@
 
 #include <gtest/gtest.h>
 
+#include <aws/core/client/AWSError.h>
+#include <aws/sts/STSErrors.h>
+
 #include "cpio/common/src/aws/error_codes.h"
 #include "public/core/test/interface/execution_result_matchers.h"
 
+using Aws::Client::AWSError;
 using Aws::STS::STSErrors;
 using google::scp::core::FailureExecutionResult;
 
@@ -32,38 +36,38 @@ using google::scp::core::test::ResultIs;
 
 namespace google::scp::cpio::client_providers::test {
 TEST(STSErrorConverter, SucceededToConvertHandledSTSErrors) {
-  EXPECT_THAT(
-      STSErrorConverter::ConvertSTSError(STSErrors::VALIDATION, "error"),
-      ResultIs(FailureExecutionResult(SC_AWS_VALIDATION_FAILED)));
-  EXPECT_THAT(
-      STSErrorConverter::ConvertSTSError(STSErrors::ACCESS_DENIED, "error"),
-      ResultIs(FailureExecutionResult(SC_AWS_INVALID_CREDENTIALS)));
   EXPECT_THAT(STSErrorConverter::ConvertSTSError(
-                  STSErrors::INVALID_PARAMETER_COMBINATION, "error"),
+                  AWSError<STSErrors>(STSErrors::VALIDATION, false)),
+              ResultIs(FailureExecutionResult(SC_AWS_VALIDATION_FAILED)));
+  EXPECT_THAT(STSErrorConverter::ConvertSTSError(
+                  AWSError<STSErrors>(STSErrors::ACCESS_DENIED, false)),
+              ResultIs(FailureExecutionResult(SC_AWS_INVALID_CREDENTIALS)));
+  EXPECT_THAT(STSErrorConverter::ConvertSTSError(AWSError<STSErrors>(
+                  STSErrors::INVALID_PARAMETER_COMBINATION, false)),
+              ResultIs(FailureExecutionResult(SC_AWS_INVALID_REQUEST)));
+  EXPECT_THAT(STSErrorConverter::ConvertSTSError(AWSError<STSErrors>(
+                  STSErrors::INVALID_QUERY_PARAMETER, false)),
+              ResultIs(FailureExecutionResult(SC_AWS_INVALID_REQUEST)));
+  EXPECT_THAT(STSErrorConverter::ConvertSTSError(AWSError<STSErrors>(
+                  STSErrors::INVALID_PARAMETER_VALUE, false)),
               ResultIs(FailureExecutionResult(SC_AWS_INVALID_REQUEST)));
   EXPECT_THAT(STSErrorConverter::ConvertSTSError(
-                  STSErrors::INVALID_QUERY_PARAMETER, "error"),
-              ResultIs(FailureExecutionResult(SC_AWS_INVALID_REQUEST)));
+                  AWSError<STSErrors>(STSErrors::INTERNAL_FAILURE, false)),
+              ResultIs(FailureExecutionResult(SC_AWS_INTERNAL_SERVICE_ERROR)));
   EXPECT_THAT(STSErrorConverter::ConvertSTSError(
-                  STSErrors::INVALID_PARAMETER_VALUE, "error"),
-              ResultIs(FailureExecutionResult(SC_AWS_INVALID_REQUEST)));
-  EXPECT_THAT(
-      STSErrorConverter::ConvertSTSError(STSErrors::INTERNAL_FAILURE, "error"),
-      ResultIs(FailureExecutionResult(SC_AWS_INTERNAL_SERVICE_ERROR)));
-  EXPECT_THAT(STSErrorConverter::ConvertSTSError(STSErrors::SERVICE_UNAVAILABLE,
-                                                 "error"),
+                  AWSError<STSErrors>(STSErrors::SERVICE_UNAVAILABLE, false)),
               ResultIs(FailureExecutionResult(SC_AWS_SERVICE_UNAVAILABLE)));
-  EXPECT_THAT(STSErrorConverter::ConvertSTSError(STSErrors::NETWORK_CONNECTION,
-                                                 "error"),
+  EXPECT_THAT(STSErrorConverter::ConvertSTSError(
+                  AWSError<STSErrors>(STSErrors::NETWORK_CONNECTION, false)),
               ResultIs(FailureExecutionResult(SC_AWS_SERVICE_UNAVAILABLE)));
-  EXPECT_THAT(
-      STSErrorConverter::ConvertSTSError(STSErrors::THROTTLING, "error"),
-      ResultIs(FailureExecutionResult(SC_AWS_REQUEST_LIMIT_REACHED)));
+  EXPECT_THAT(STSErrorConverter::ConvertSTSError(
+                  AWSError<STSErrors>(STSErrors::THROTTLING, false)),
+              ResultIs(FailureExecutionResult(SC_AWS_REQUEST_LIMIT_REACHED)));
 }
 
 TEST(STSErrorConverter, SucceededToConvertNonHandledSTSErrors) {
-  EXPECT_THAT(STSErrorConverter::ConvertSTSError(
-                  STSErrors::MALFORMED_QUERY_STRING, "error"),
+  EXPECT_THAT(STSErrorConverter::ConvertSTSError(AWSError<STSErrors>(
+                  STSErrors::MALFORMED_QUERY_STRING, false)),
               ResultIs(FailureExecutionResult(SC_AWS_INTERNAL_SERVICE_ERROR)));
 }
 }  // namespace google::scp::cpio::client_providers::test

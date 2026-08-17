@@ -19,6 +19,7 @@
 #include <chrono>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "cc/core/interface/service_interface.h"
 #include "cc/public/cpio/utils/key_fetching/proto/cloud_wrapped_key.pb.h"
@@ -35,6 +36,9 @@ struct WrappedKeyHandlerOptions {
       std::chrono::milliseconds(2000);  // 2s
   // Only disable for benchmark testing.
   bool enable_cache = true;
+
+  std::vector<std::string> image_signature_key_ids;
+  std::string aws_target_audience_for_web_identity;
 };
 
 /// @brief Interface to get and cache Gcp Wrapped Keys from a key management

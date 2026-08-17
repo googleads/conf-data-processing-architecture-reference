@@ -44,7 +44,7 @@ struct KeyFetcherOptions {
   std::chrono::seconds auto_refresh_time_duration =
       std::chrono::seconds(24 * 60 * 60);
 
-  bool enable_on_demand_fetching_for_hmac_key = false;
+  bool enable_on_demand_fetching_for_hmac_key = true;
   bool enable_on_demand_fetching_lock_for_encryption_key = false;
   std::chrono::milliseconds on_demand_fetching_waiting_timeout =
       std::chrono::milliseconds(2000);  // 2s

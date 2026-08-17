@@ -320,21 +320,16 @@ void OndemandKeyFetcherWithCache::PrefetchKeys() noexcept {
         PrefetchWithListActiveKeys(keyset_name, start_time, end_time);
       }
     } else {
-      if (key_fetcher_options_.enable_active_keys_api_for_encryption_keys) {
-        // ListActiveKeys needs to specify its start and end time to ensure the
-        // behaviours for ListPrivateKeys and ListActiveKeys are in sync in the
-        // legacy prefetch. Start time for the old prefetch system is (now - age
-        // + 1 week) End time for the old prefetch system is (now + 1 week)
-        int64_t age = duration_cast<nanoseconds>(
-                          key_fetcher_options_.prefetch_keys_max_age)
-                          .count();
-        auto start_time =
-            TimeUtil::NanosecondsToTimestamp(now - age + one_week);
-        auto end_time = TimeUtil::NanosecondsToTimestamp(now + one_week);
-        PrefetchWithListActiveKeys(keyset_name, start_time, end_time);
-      } else {
-        PrefetchWithListPrivateKeys(keyset_name, std::nullopt);
-      }
+      // ListActiveKeys needs to specify its start and end time to ensure the
+      // behaviours for ListPrivateKeys and ListActiveKeys are in sync in the
+      // legacy prefetch. Start time for the old prefetch system is (now - age
+      // + 1 week) End time for the old prefetch system is (now + 1 week)
+      int64_t age =
+          duration_cast<nanoseconds>(key_fetcher_options_.prefetch_keys_max_age)
+              .count();
+      auto start_time = TimeUtil::NanosecondsToTimestamp(now - age + one_week);
+      auto end_time = TimeUtil::NanosecondsToTimestamp(now + one_week);
+      PrefetchWithListActiveKeys(keyset_name, start_time, end_time);
     }
   }
 }

@@ -14,6 +14,7 @@
 
 #include "public/cpio/utils/configuration_fetcher/src/configuration_fetcher_utils.h"
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 #include <memory>
@@ -38,6 +39,8 @@ using google::scp::core::test::ResultIs;
 using google::scp::core::test::WaitUntil;
 using std::optional;
 using std::string;
+using testing::ElementsAre;
+using testing::IsEmpty;
 using testing::UnorderedElementsAre;
 
 namespace google::scp::cpio {
@@ -100,5 +103,24 @@ TEST(ConfigurationFetcherUtilsTest, StringToEnumSetTest) {
       ConfigurationFetcherUtils::StringToEnumSet("Invalid", kLogLevelConfigMap),
       ResultIs(
           FailureExecutionResult(SC_CONFIGURATION_FETCHER_CONVERSION_FAILED)));
+}
+
+TEST(ConfigurationFetcherUtilsTest, StringToListTest) {
+  EXPECT_THAT(*ConfigurationFetcherUtils::StringToList("p1,p2,p3"),
+              ElementsAre("p1", "p2", "p3"));
+  EXPECT_THAT(*ConfigurationFetcherUtils::StringToList("p1, p2, p3"),
+              ElementsAre("p1", "p2", "p3"));
+  EXPECT_THAT(
+      *ConfigurationFetcherUtils::StringToList("[\"p1\", \"p2\", \"p3\"]"),
+      ElementsAre("p1", "p2", "p3"));
+  EXPECT_THAT(*ConfigurationFetcherUtils::StringToList("[p1, 'p2', p3]"),
+              ElementsAre("p1", "p2", "p3"));
+  EXPECT_THAT(*ConfigurationFetcherUtils::StringToList("single_item"),
+              ElementsAre("single_item"));
+  EXPECT_THAT(*ConfigurationFetcherUtils::StringToList(",p1,,p2,"),
+              ElementsAre("p1", "p2"));
+  EXPECT_THAT(*ConfigurationFetcherUtils::StringToList(""), IsEmpty());
+  EXPECT_THAT(*ConfigurationFetcherUtils::StringToList("[]"), IsEmpty());
+  EXPECT_THAT(*ConfigurationFetcherUtils::StringToList("   "), IsEmpty());
 }
 }  // namespace google::scp::cpio

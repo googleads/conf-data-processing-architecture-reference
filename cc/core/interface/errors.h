@@ -18,6 +18,7 @@
 
 #include <functional>
 #include <map>
+#include <optional>
 #include <string>
 
 #include "public/core/interface/execution_result.h"
@@ -167,6 +168,30 @@ inline uint64_t ExtractComponentCode(uint64_t error_code) {
 }
 
 /**
+ * @brief Gets the SCPError object for the given error code.
+ *
+ * @param error_code The global error code.
+ * @return std::optional<std::reference_wrapper<const SCPError>> The SCPError
+ * object if found, std::nullopt otherwise.
+ */
+inline std::optional<std::reference_wrapper<const SCPError>> GetSCPError(
+    uint64_t error_code) {
+  uint64_t component = ExtractComponentCode(error_code);
+  auto& global_errors = GetGlobalErrorCodes();
+
+  auto comp_it = global_errors.find(component);
+  if (comp_it != global_errors.end()) {
+    auto& comp_errors = comp_it->second;
+    auto err_it = comp_errors.find(error_code);
+    if (err_it != comp_errors.end()) {
+      return std::cref(err_it->second);
+    }
+  }
+
+  return std::nullopt;
+}
+
+/**
  * @brief Gets the error message.
  *
  * @param error_code the global error code.
@@ -183,10 +208,8 @@ inline const char* GetErrorMessage(uint64_t error_code) {
     return kUnknownErrorCodeStr;
   }
 
-  uint64_t component = ExtractComponentCode(error_code);
-  auto it = GetGlobalErrorCodes()[component].find(error_code);
-  if (it != GetGlobalErrorCodes()[component].end()) {
-    return it->second.error_message.c_str();
+  if (auto scp_error = GetSCPError(error_code); scp_error.has_value()) {
+    return scp_error->get().error_message.c_str();
   }
 
   return kInvalidErrorCodeStr;
@@ -199,10 +222,17 @@ inline const char* GetErrorMessage(uint64_t error_code) {
  * @return HttpStatusCode The http status code associated with the error.
  */
 inline HttpStatusCode GetErrorHttpStatusCode(uint64_t error_code) {
-  uint64_t component = ExtractComponentCode(error_code);
-  return GetGlobalErrorCodes()[component]
-      .find(error_code)
-      ->second.error_http_status_code;
+  if (error_code == SC_OK) {
+    return HttpStatusCode::OK;
+  } else if (error_code == SC_UNKNOWN) {
+    return HttpStatusCode::INTERNAL_SERVER_ERROR;
+  }
+
+  if (auto scp_error = GetSCPError(error_code); scp_error.has_value()) {
+    return scp_error->get().error_http_status_code;
+  }
+
+  return HttpStatusCode::INTERNAL_SERVER_ERROR;
 }
 
 /**
@@ -215,8 +245,9 @@ inline uint64_t GetPublicErrorCode(uint64_t error_code) {
   if (error_code == SC_OK) {
     return SC_OK;
   }
-  auto it = GetPublicErrorCodesMap().find(error_code);
-  if (it == GetPublicErrorCodesMap().end()) {
+  auto& public_errors = GetPublicErrorCodesMap();
+  auto it = public_errors.find(error_code);
+  if (it == public_errors.end()) {
     // Returns itself if no public error code defined.
     return error_code;
   }

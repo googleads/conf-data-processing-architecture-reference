@@ -54,6 +54,7 @@ using google::scp::cpio::KeyType;
 using google::scp::cpio::KmsClientInterface;
 using std::shared_ptr;
 using std::string;
+using std::vector;
 using std::chrono::milliseconds;
 
 namespace google::scp::cpio {
@@ -128,6 +129,15 @@ AwsWrappedKeyHandlerWithCache::CreateDecryptRequest(
   decrypt_request.set_kms_region(std::string(resource_parts[3]));
 
   decrypt_request.set_account_identity(wrapped_key.role_arn());
+  for (const auto& signature :
+       wrapped_key_handler_options_.image_signature_key_ids) {
+    decrypt_request.add_key_ids(signature);
+  }
+  if (!wrapped_key_handler_options_.aws_target_audience_for_web_identity
+           .empty()) {
+    decrypt_request.set_target_audience_for_web_identity(
+        wrapped_key_handler_options_.aws_target_audience_for_web_identity);
+  }
   return decrypt_request;
 }
 

@@ -209,16 +209,16 @@ run "doesnt_create_service_account" {
     error_message = "Created service account"
   }
   assert {
-    condition     = google_project_iam_member.collector_service_account_monitoring_viewer.member == "serviceAccount:email"
-    error_message = "IAM member using wrong member"
+    condition     = length(google_project_iam_member.collector_service_account_monitoring_viewer) == 0
+    error_message = "Created IAM member"
   }
   assert {
-    condition     = google_project_iam_member.collector_service_account_metric_writer_iam.member == "serviceAccount:email"
-    error_message = "IAM member using wrong member"
+    condition     = length(google_project_iam_member.collector_service_account_metric_writer_iam) == 0
+    error_message = "Created IAM member"
   }
   assert {
-    condition     = google_project_iam_member.collector_service_account_log_writer_iam.member == "serviceAccount:email"
-    error_message = "IAM member using wrong member"
+    condition     = length(google_project_iam_member.collector_service_account_log_writer_iam) == 0
+    error_message = "Created IAM member"
   }
 }
 
@@ -231,15 +231,15 @@ run "iam_members_use_autocreated_account" {
   }
 
   assert {
-    condition     = google_project_iam_member.collector_service_account_monitoring_viewer.member == "serviceAccount:google_service_account_email"
+    condition     = google_project_iam_member.collector_service_account_monitoring_viewer[0].member == "serviceAccount:google_service_account_email"
     error_message = "IAM member using wrong member"
   }
   assert {
-    condition     = google_project_iam_member.collector_service_account_metric_writer_iam.member == "serviceAccount:google_service_account_email"
+    condition     = google_project_iam_member.collector_service_account_metric_writer_iam[0].member == "serviceAccount:google_service_account_email"
     error_message = "IAM member using wrong member"
   }
   assert {
-    condition     = google_project_iam_member.collector_service_account_log_writer_iam.member == "serviceAccount:google_service_account_email"
+    condition     = google_project_iam_member.collector_service_account_log_writer_iam[0].member == "serviceAccount:google_service_account_email"
     error_message = "IAM member using wrong member"
   }
 }

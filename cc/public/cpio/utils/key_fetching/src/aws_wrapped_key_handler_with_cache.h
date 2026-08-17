@@ -18,6 +18,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "core/interface/async_executor_interface.h"
 #include "public/core/interface/execution_result.h"

@@ -154,8 +154,7 @@ class OndemandKeyFetcherWithCacheTest : public ScpTestBase {
  public:
   OndemandKeyFetcherWithCacheTest()
       : async_executor_(make_shared<AsyncExecutor>(2, 10)) {
-    KeyFetcherOptions default_options = {
-        .enable_active_keys_api_for_encryption_keys = false};
+    KeyFetcherOptions default_options = {};
     key_fetcher_with_cache_ = make_unique<OndemandKeyFetcherWithCache>(
         async_executor_, mock_key_client_, mock_metric_client_,
         CreateKeyServiceOptions(), default_options);
@@ -542,20 +541,20 @@ TEST_F(OndemandKeyFetcherWithCacheTest,
       async_executor_, mock_key_client_, mock_metric_client_,
       CreateKeyServiceOptions(),
       KeyFetcherOptions{.prefetch_keys = true,
-                        .prefetch_keys_max_age = max_age_seconds,
-                        .enable_active_keys_api_for_encryption_keys = false});
+                        .prefetch_keys_max_age = max_age_seconds});
 
   auto key_create_ts =
       duration_cast<nanoseconds>((system_clock::now()).time_since_epoch());
-  ListPrivateKeysResponse response;
+  ListActiveEncryptionKeysResponse response;
   response.mutable_private_keys()->Add(CreatePrivateKey1(key_create_ts));
-  request_.set_max_age_seconds(max_age_seconds.count());
-  request_.set_key_set_name(kKeyNamespace1);
-  EXPECT_CALL(mock_key_client_, ListPrivateKeysSync(EqualsProto(request_)))
+  EXPECT_CALL(mock_key_client_,
+              ListActiveEncryptionKeysSync(EqualsProtoIgnoringTimeRange(
+                  CreateBaseActiveKeysRequest(kKeyNamespace1))))
       .WillOnce(Return(response));
-  request_.set_key_set_name(kKeyNamespace2);
-  EXPECT_CALL(mock_key_client_, ListPrivateKeysSync(EqualsProto(request_)))
-      .WillOnce(Return(ListPrivateKeysResponse()));
+  EXPECT_CALL(mock_key_client_,
+              ListActiveEncryptionKeysSync(EqualsProtoIgnoringTimeRange(
+                  CreateBaseActiveKeysRequest(kKeyNamespace2))))
+      .WillOnce(Return(ListActiveEncryptionKeysResponse()));
 
   EXPECT_SUCCESS(prefetching_key_fetcher_with_cache.Init());
   EXPECT_SUCCESS(prefetching_key_fetcher_with_cache.Run());
@@ -574,75 +573,6 @@ TEST_F(OndemandKeyFetcherWithCacheTest,
   EXPECT_THAT(key2->public_key, kPublicKey);
 
   EXPECT_SUCCESS(prefetching_key_fetcher_with_cache.Stop());
-}
-
-TEST_F(OndemandKeyFetcherWithCacheTest, PrefetchListingKeysFailsNoRetry) {
-  ExpectOtelEncryptionKeyFetchingRequestMetricPush(
-      1, KeyFetchingType::kPrefetch, kKeyNamespace1);
-  ExpectOtelEncryptionKeyFetchingLatencyMetricPush(
-      1, KeyFetchingType::kPrefetch, kKeyNamespace1);
-  ExpectOtelEncryptionKeyFetchingErrorMetricPush(
-      1, KeyFetchingType::kPrefetch, kKeyNamespace1,
-      KeyFetchingErrorType::kGenericError);
-
-  seconds max_age_seconds(5);
-  // Make a new KeyFetcher with the proper settings
-  auto options = CreateKeyServiceOptions();
-  options.mutable_key_namespace()->RemoveLast();
-  OndemandKeyFetcherWithCache prefetching_key_fetcher_with_cache(
-      async_executor_, mock_key_client_, mock_metric_client_, options,
-      KeyFetcherOptions{.prefetch_keys = true,
-                        .prefetch_retry = false,
-                        .max_prefetch_wait_time_millis = 1,
-                        .prefetch_keys_max_age = max_age_seconds,
-                        .enable_active_keys_api_for_encryption_keys = false});
-
-  request_.set_max_age_seconds(max_age_seconds.count());
-  EXPECT_CALL(mock_key_client_, ListPrivateKeysSync)
-      .WillOnce(Return(FailureExecutionResult(SC_UNKNOWN)));
-
-  EXPECT_SUCCESS(prefetching_key_fetcher_with_cache.Init());
-  EXPECT_SUCCESS(prefetching_key_fetcher_with_cache.Run());
-  prefetching_key_fetcher_with_cache.Stop();
-}
-
-TEST_F(OndemandKeyFetcherWithCacheTest, PrefetchListingKeysFailsWithRetry) {
-  ExpectOtelEncryptionKeyFetchingRequestMetricPush(
-      1, KeyFetchingType::kPrefetch, kKeyNamespace1);
-  ExpectOtelEncryptionKeyFetchingLatencyMetricPush(
-      1, KeyFetchingType::kPrefetch, kKeyNamespace1);
-  ExpectOtelEncryptionKeyFetchingErrorMetricPush(
-      1, KeyFetchingType::kPrefetch, kKeyNamespace1,
-      KeyFetchingErrorType::kGenericError);
-  ExpectOtelEncryptionKeyFetchingRequestMetricPush(
-      1, KeyFetchingType::kPrefetchRetry, kKeyNamespace1);
-  ExpectOtelEncryptionKeyFetchingLatencyMetricPush(
-      1, KeyFetchingType::kPrefetchRetry, kKeyNamespace1);
-  ExpectOtelEncryptionKeyFetchingErrorMetricPush(
-      1, KeyFetchingType::kPrefetchRetry, kKeyNamespace1,
-      KeyFetchingErrorType::kGenericError);
-
-  seconds max_age_seconds(5);
-  // Make a new KeyFetcher with the proper settings
-
-  auto options = CreateKeyServiceOptions();
-  options.mutable_key_namespace()->RemoveLast();
-  OndemandKeyFetcherWithCache prefetching_key_fetcher_with_cache(
-      async_executor_, mock_key_client_, mock_metric_client_, options,
-      KeyFetcherOptions{.prefetch_keys = true,
-                        .prefetch_retry = true,
-                        .max_prefetch_wait_time_millis = 1,
-                        .prefetch_keys_max_age = max_age_seconds,
-                        .enable_active_keys_api_for_encryption_keys = false});
-
-  request_.set_max_age_seconds(max_age_seconds.count());
-  EXPECT_CALL(mock_key_client_, ListPrivateKeysSync)
-      .WillOnce(Return(FailureExecutionResult(SC_UNKNOWN)))
-      .WillOnce(Return(FailureExecutionResult(SC_UNKNOWN)));
-
-  EXPECT_SUCCESS(prefetching_key_fetcher_with_cache.Init());
-  EXPECT_SUCCESS(prefetching_key_fetcher_with_cache.Run());
-  prefetching_key_fetcher_with_cache.Stop();
 }
 
 TEST_F(OndemandKeyFetcherWithCacheTest, OndemandFetchingOnceWithMultiThreads) {
@@ -901,8 +831,8 @@ TEST_F(OndemandKeyFetcherWithCacheActiveTest, PrefetchingActiveKeysFails) {
 
   EXPECT_SUCCESS(key_fetcher_with_cache_->Run());
 
-  // NOTE: On-demand fetch currently uses the old ListPrivateKeys API even when
-  // enable_active_keys_api_for_encryption_keys is true.
+  // NOTE: On-demand fetch currently uses the old ListPrivateKeys API when
+  // fetching by key ids.
   ExpectOtelEncryptionKeyCacheStatusMetricPush(
       1, kAllKeyNamespaces, KeyCacheStatus::kValidKeyCacheMiss);
   ExpectOtelEncryptionKeyFetchingRequestMetricPush(
@@ -1055,72 +985,6 @@ TEST_F(OndemandKeyFetcherWithCacheActiveTest,
               ResultIs(FailureExecutionResult(SC_CPIO_KEY_NOT_FOUND)));
 }
 
-TEST_F(OndemandKeyFetcherWithCacheTest, PrefetchWithNewConfigKeyIdAndDuration) {
-  ExpectOtelEncryptionKeyFetchingRequestMetricPush(
-      2, KeyFetchingType::kPrefetch, kKeyNamespace1);
-  ExpectOtelEncryptionKeyFetchingLatencyMetricPush(
-      2, KeyFetchingType::kPrefetch, kKeyNamespace1);
-  ExpectOtelEncryptionKeyFetchingRequestMetricPush(
-      1, KeyFetchingType::kPrefetch, kKeyNamespace2);
-  ExpectOtelEncryptionKeyFetchingLatencyMetricPush(
-      1, KeyFetchingType::kPrefetch, kKeyNamespace2);
-  ExpectOtelEncryptionKeyCacheStatusMetricPush(
-      1, kAllKeyNamespaces, KeyCacheStatus::kValidKeyCacheHit);
-  ExpectOtelEncryptionKeyFetchingErrorMetricPush(0);
-
-  KeyFetcherOptions key_fetcher_options{
-      .prefetch_keys = true,
-      .prefetch_retry = false,
-      .max_prefetch_wait_time_millis = 1,
-      .enable_active_keys_api_for_encryption_keys = false,
-  };
-
-  EncryptionKeyPrefetchConfig::KeysetPrefetchConfig config1;
-  config1.add_key_ids(kInputKeyId1);
-  config1.mutable_prefetch_duration()->set_seconds(60 * 60 * 24 * 7);  // 1 week
-  key_fetcher_options.encryption_key_prefetch_config_map[kKeyNamespace1] =
-      config1;
-
-  auto key_service_options = CreateKeyServiceOptions();
-  OndemandKeyFetcherWithCache prefetching_key_fetcher_with_cache(
-      async_executor_, mock_key_client_, mock_metric_client_,
-      key_service_options, key_fetcher_options);
-
-  ListPrivateKeysRequest expected_private_request1 =
-      CreateBasePrivateKeysRequest(kKeyNamespace1);
-  expected_private_request1.add_key_ids(kInputKeyId1);
-  auto key_create_ts =
-      duration_cast<nanoseconds>((system_clock::now()).time_since_epoch());
-  ListPrivateKeysResponse response1;
-  response1.mutable_private_keys()->Add(CreatePrivateKey1(key_create_ts));
-  EXPECT_CALL(mock_key_client_,
-              ListPrivateKeysSync(EqualsProto(expected_private_request1)))
-      .WillOnce(Return(response1));
-
-  ListActiveEncryptionKeysRequest expected_active_request1 =
-      CreateBaseActiveKeysRequest(kKeyNamespace1);
-  EXPECT_CALL(mock_key_client_,
-              ListActiveEncryptionKeysSync(
-                  EqualsProtoIgnoringTimeRange(expected_active_request1)))
-      .WillOnce(Return(ListActiveEncryptionKeysResponse()));
-
-  ListPrivateKeysRequest expected_request2 =
-      CreateBasePrivateKeysRequest(kKeyNamespace2);
-  expected_request2.set_max_age_seconds(
-      key_fetcher_options.prefetch_keys_max_age.count());
-  EXPECT_CALL(mock_key_client_,
-              ListPrivateKeysSync(EqualsProto(expected_request2)))
-      .WillOnce(Return(ListPrivateKeysResponse()));
-
-  EXPECT_SUCCESS(prefetching_key_fetcher_with_cache.Init());
-  EXPECT_SUCCESS(prefetching_key_fetcher_with_cache.Run());
-
-  auto key = prefetching_key_fetcher_with_cache.GetKey(kInputKeyId1);
-  EXPECT_THAT(key->private_key, kPrivateKey);
-
-  EXPECT_SUCCESS(prefetching_key_fetcher_with_cache.Stop());
-}
-
 TEST_F(OndemandKeyFetcherWithCacheTest, PrefetchingFallbackOldListActiveKeys) {
   ExpectOtelEncryptionKeyFetchingRequestMetricPush(
       1, KeyFetchingType::kPrefetch, kKeyNamespace1);
@@ -1137,7 +1001,6 @@ TEST_F(OndemandKeyFetcherWithCacheTest, PrefetchingFallbackOldListActiveKeys) {
       .prefetch_retry = false,
       .max_prefetch_wait_time_millis = 1,
       .prefetch_keys_max_age = max_age,
-      .enable_active_keys_api_for_encryption_keys = true,
   };
 
   auto key_service_options = CreateKeyServiceOptions();
@@ -1167,52 +1030,6 @@ TEST_F(OndemandKeyFetcherWithCacheTest, PrefetchingFallbackOldListActiveKeys) {
   EXPECT_SUCCESS(prefetching_key_fetcher_with_cache.Stop());
 }
 
-TEST_F(OndemandKeyFetcherWithCacheTest, PrefetchingFallbackOldListPrivateKeys) {
-  ExpectOtelEncryptionKeyFetchingRequestMetricPush(
-      1, KeyFetchingType::kPrefetch, kKeyNamespace1);
-  ExpectOtelEncryptionKeyFetchingLatencyMetricPush(
-      1, KeyFetchingType::kPrefetch, kKeyNamespace1);
-  ExpectOtelEncryptionKeyCacheStatusMetricPush(
-      1, kKeyNamespace1, KeyCacheStatus::kValidKeyCacheHit);
-  ExpectOtelEncryptionKeyFetchingErrorMetricPush(0);
-
-  seconds max_age = std::chrono::seconds(60 * 60 * 24 * 7);
-
-  KeyFetcherOptions key_fetcher_options{
-      .prefetch_keys = true,
-      .prefetch_retry = false,
-      .max_prefetch_wait_time_millis = 1,
-      .prefetch_keys_max_age = max_age,
-      .enable_active_keys_api_for_encryption_keys = false,
-  };
-
-  auto key_service_options = CreateKeyServiceOptions();
-  key_service_options.mutable_key_namespace()->Clear();
-  key_service_options.add_key_namespace(kKeyNamespace1);
-  OndemandKeyFetcherWithCache prefetching_key_fetcher_with_cache(
-      async_executor_, mock_key_client_, mock_metric_client_,
-      key_service_options, key_fetcher_options);
-
-  ListPrivateKeysRequest expected_request =
-      CreateBasePrivateKeysRequest(kKeyNamespace1);
-  expected_request.set_max_age_seconds(max_age.count());
-  auto key_create_ts =
-      duration_cast<nanoseconds>((system_clock::now()).time_since_epoch());
-  ListPrivateKeysResponse response;
-  response.mutable_private_keys()->Add(CreatePrivateKey1(key_create_ts));
-  EXPECT_CALL(mock_key_client_,
-              ListPrivateKeysSync(EqualsProto(expected_request)))
-      .WillOnce(Return(response));
-
-  EXPECT_SUCCESS(prefetching_key_fetcher_with_cache.Init());
-  EXPECT_SUCCESS(prefetching_key_fetcher_with_cache.Run());
-
-  auto key = prefetching_key_fetcher_with_cache.GetKey(kInputKeyId1);
-  EXPECT_THAT(key->private_key, kPrivateKey);
-
-  EXPECT_SUCCESS(prefetching_key_fetcher_with_cache.Stop());
-}
-
 TEST_F(OndemandKeyFetcherWithCacheTest, PrefetchingWithOldAndNewSystem) {
   ExpectOtelEncryptionKeyFetchingRequestMetricPush(
       1, KeyFetchingType::kPrefetch, kKeyNamespace1);
@@ -1230,7 +1047,6 @@ TEST_F(OndemandKeyFetcherWithCacheTest, PrefetchingWithOldAndNewSystem) {
       .prefetch_keys = true,
       .prefetch_retry = false,
       .max_prefetch_wait_time_millis = 1,
-      .enable_active_keys_api_for_encryption_keys = true,
   };
 
   EncryptionKeyPrefetchConfig::KeysetPrefetchConfig config1;

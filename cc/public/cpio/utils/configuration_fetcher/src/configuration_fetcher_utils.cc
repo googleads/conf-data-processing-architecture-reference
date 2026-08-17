@@ -18,7 +18,10 @@
 
 #include <sstream>
 #include <string>
+#include <vector>
 
+#include "absl/strings/str_split.h"
+#include "absl/strings/strip.h"
 #include "public/core/interface/execution_result.h"
 
 #include "error_codes.h"
@@ -28,6 +31,7 @@ using google::scp::core::ExecutionResultOr;
 using google::scp::core::FailureExecutionResult;
 using google::scp::core::common::kZeroUuid;
 using std::string;
+using std::vector;
 
 namespace google::scp::cpio {
 ExecutionResultOr<bool> ConfigurationFetcherUtils::StringToBool(
@@ -44,5 +48,27 @@ ExecutionResultOr<bool> ConfigurationFetcherUtils::StringToBool(
   SCP_ERROR(kConfigurationFetcherUtils, kZeroUuid, result,
             "Could not convert %s to bool", value.c_str());
   return static_cast<ExecutionResult>(result);
+}
+
+ExecutionResultOr<vector<string>> ConfigurationFetcherUtils::StringToList(
+    const string& value) {
+  vector<string> list;
+  if (value.empty()) {
+    return list;
+  }
+  std::string str = value;
+  str = std::string(absl::StripPrefix(str, "["));
+  str = std::string(absl::StripSuffix(str, "]"));
+  for (absl::string_view part : absl::StrSplit(str, ',', absl::SkipEmpty())) {
+    std::string trimmed(absl::StripAsciiWhitespace(part));
+    trimmed = std::string(absl::StripPrefix(trimmed, "\""));
+    trimmed = std::string(absl::StripSuffix(trimmed, "\""));
+    trimmed = std::string(absl::StripPrefix(trimmed, "'"));
+    trimmed = std::string(absl::StripSuffix(trimmed, "'"));
+    if (!trimmed.empty()) {
+      list.push_back(trimmed);
+    }
+  }
+  return list;
 }
 }  // namespace google::scp::cpio

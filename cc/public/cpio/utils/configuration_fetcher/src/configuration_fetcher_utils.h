@@ -127,5 +127,8 @@ class ConfigurationFetcherUtils {
   }
 
   static core::ExecutionResultOr<bool> StringToBool(const std::string& value);
+
+  static core::ExecutionResultOr<std::vector<std::string>> StringToList(
+      const std::string& value);
 };
 }  // namespace google::scp::cpio

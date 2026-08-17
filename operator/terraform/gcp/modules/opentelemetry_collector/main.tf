@@ -66,18 +66,21 @@ resource "google_service_account" "collector_service_account" {
 }
 
 resource "google_project_iam_member" "collector_service_account_monitoring_viewer" {
+  count   = var.user_provided_collector_sa_email == "" ? 1 : 0
   project = var.project_id
   role    = "roles/monitoring.viewer"
   member  = "serviceAccount:${local.collector_service_account_email}"
 }
 
 resource "google_project_iam_member" "collector_service_account_metric_writer_iam" {
+  count   = var.user_provided_collector_sa_email == "" ? 1 : 0
   project = var.project_id
   role    = "roles/monitoring.metricWriter"
   member  = "serviceAccount:${local.collector_service_account_email}"
 }
 
 resource "google_project_iam_member" "collector_service_account_log_writer_iam" {
+  count   = var.user_provided_collector_sa_email == "" ? 1 : 0
   project = var.project_id
   role    = "roles/logging.logWriter"
   member  = "serviceAccount:${local.collector_service_account_email}"

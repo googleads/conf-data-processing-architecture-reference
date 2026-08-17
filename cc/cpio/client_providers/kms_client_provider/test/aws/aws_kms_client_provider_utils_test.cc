@@ -57,8 +57,8 @@ class KMSErrorConverterTest
 };
 
 TEST_P(KMSErrorConverterTest, KMSErrorConverter) {
-  auto error_code = GetKMSError();
-  EXPECT_THAT(AwsKmsClientUtils::ConvertKmsError(error_code, "failure"),
+  AWSError<KMSErrors> error(GetKMSError(), false);
+  EXPECT_THAT(AwsKmsClientUtils::ConvertKmsError(error),
               ResultIs(GetExpectedFailureExecutionResult()));
 }
 
@@ -89,6 +89,10 @@ INSTANTIATE_TEST_SUITE_P(
            make_tuple(KMSErrors::INVALID_ARN,
                       FailureExecutionResult(SC_AWS_INVALID_REQUEST)),
            make_tuple(KMSErrors::INVALID_CIPHERTEXT,
-                      FailureExecutionResult(SC_AWS_INVALID_REQUEST))));
+                      FailureExecutionResult(SC_AWS_INVALID_REQUEST)),
+           make_tuple(KMSErrors::INCORRECT_KEY,
+                      FailureExecutionResult(SC_AWS_INVALID_REQUEST)),
+           make_tuple(KMSErrors::KEY_UNAVAILABLE,
+                      FailureExecutionResult(SC_AWS_SERVICE_UNAVAILABLE))));
 
 }  // namespace google::scp::cpio::client_providers::test

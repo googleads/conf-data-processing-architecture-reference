@@ -246,8 +246,12 @@ TEST_F(AutoRefreshKeyFetcherWithCacheTest,
   ExpectOtelSidKeyFetchingRequestMetricPush(1, KeyFetchingType::kPrefetch);
   ExpectOtelSidKeyFetchingLatencyMetricPush(1, KeyFetchingType::kPrefetch);
   ExpectOtelSidKeyCacheStatusMetricPush(1, KeyCacheStatus::kValidKeyCacheMiss);
+  ExpectOtelSidKeyFetchingRequestMetricPush(1, KeyFetchingType::kOnDemand);
+  ExpectOtelSidKeyFetchingLatencyMetricPush(1, KeyFetchingType::kOnDemand);
   ExpectOtelSidKeyFetchingErrorMetricPush(0);
   ExpectOtelSidKeyFetchingErrorMetricPush(1, KeyFetchingType::kPrefetch,
+                                          KeyFetchingErrorType::kGenericError);
+  ExpectOtelSidKeyFetchingErrorMetricPush(1, KeyFetchingType::kOnDemand,
                                           KeyFetchingErrorType::kGenericError);
   ExpectOtelKeysetFetchingRequestMetricPush(1, KeyFetchingType::kPrefetch);
 
@@ -841,7 +845,6 @@ TEST_F(AutoRefreshKeyFetcherWithCacheTest, OnDemandKeysFetchingTimeout) {
       mock_metric_client_,
       KeyFetcherOptions{
           .auto_refresh_time_duration = seconds(10),
-          .enable_on_demand_fetching_for_hmac_key = true,
           .on_demand_fetching_waiting_timeout = std::chrono::milliseconds(10)});
 
   EXPECT_SUCCESS(key_fetcher_with_cache->Init());
@@ -923,8 +926,7 @@ TEST_F(AutoRefreshKeyFetcherWithCacheTest, GettingKeysSuccessfulWithOndemand) {
       KeyFetcherOptions{.max_prefetch_wait_time_millis = 1,
                         // no auto-refresh since the time interval is too long.
                         .auto_refresh_time_duration =
-                            std::chrono::seconds(30), /* auto refresh time*/
-                        .enable_on_demand_fetching_for_hmac_key = true});
+                            std::chrono::seconds(30) /* auto refresh time*/});
 
   EXPECT_SUCCESS(key_fetcher_with_cache->Init());
   EXPECT_SUCCESS(key_fetcher_with_cache->Run());
@@ -1226,6 +1228,8 @@ TEST_F(AutoRefreshKeyFetcherWithCacheTest,
        GetValidKeysFailedWithMissingActiveKey) {
   ExpectOtelSidKeyFetchingRequestMetricPush(1, KeyFetchingType::kPrefetch);
   ExpectOtelSidKeyFetchingLatencyMetricPush(1, KeyFetchingType::kPrefetch);
+  ExpectOtelSidKeyFetchingRequestMetricPush(1, KeyFetchingType::kOnDemand);
+  ExpectOtelSidKeyFetchingLatencyMetricPush(1, KeyFetchingType::kOnDemand);
   ExpectOtelSidKeyCacheStatusMetricPush(1, KeyCacheStatus::kValidKeyCacheMiss);
   ExpectOtelSidKeyFetchingErrorMetricPush(0);
   ExpectOtelKeysetFetchingRequestMetricPush(1, KeyFetchingType::kPrefetch);
@@ -1267,7 +1271,7 @@ TEST_F(AutoRefreshKeyFetcherWithCacheTest,
   EXPECT_CALL(mock_key_client_,
               ListActiveEncryptionKeysSync(
                   EqualsProtoIgnoringFields(request_, "query_time_range")))
-      .WillOnce(Return(response));
+      .WillRepeatedly(Return(response));
 
   auto key_fetcher_with_cache = make_unique<AutoRefreshKeyFetcherWithCache>(
       mock_key_client_, CreatePrivateKeyEndpoints(), kKeyNamespaceId,
@@ -1589,8 +1593,7 @@ TEST_F(AutoRefreshKeyFetcherWithCacheTest,
       mock_metric_client_,
       KeyFetcherOptions{.max_prefetch_wait_time_millis = 1,
                         .auto_refresh_time_duration =
-                            std::chrono::seconds(20) /* auto refresh time*/,
-                        .enable_on_demand_fetching_for_hmac_key = true});
+                            std::chrono::seconds(20) /* auto refresh time*/});
   EXPECT_SUCCESS(key_fetcher_with_cache->Init());
   // No key being fetched and cached during initialization.
   EXPECT_SUCCESS(key_fetcher_with_cache->Run());
@@ -1648,8 +1651,7 @@ TEST_F(AutoRefreshKeyFetcherWithCacheTest,
       mock_metric_client_,
       KeyFetcherOptions{.max_prefetch_wait_time_millis = 1,
                         .auto_refresh_time_duration =
-                            std::chrono::seconds(20) /* auto refresh time*/,
-                        .enable_on_demand_fetching_for_hmac_key = true});
+                            std::chrono::seconds(20) /* auto refresh time*/});
   EXPECT_SUCCESS(key_fetcher_with_cache->Init());
   // No key being fetched and cached during initialization.
   EXPECT_SUCCESS(key_fetcher_with_cache->Run());
@@ -1695,8 +1697,7 @@ TEST_F(AutoRefreshKeyFetcherWithCacheTest, PrefetchFailsWithRetry) {
       KeyFetcherOptions{.prefetch_retry = true,
                         .max_prefetch_wait_time_millis = 1,
                         .auto_refresh_time_duration =
-                            std::chrono::seconds(20) /* auto refresh time*/,
-                        .enable_on_demand_fetching_for_hmac_key = true});
+                            std::chrono::seconds(20) /* auto refresh time*/});
 
   EXPECT_CALL(mock_key_client_,
               ListActiveEncryptionKeysSync(

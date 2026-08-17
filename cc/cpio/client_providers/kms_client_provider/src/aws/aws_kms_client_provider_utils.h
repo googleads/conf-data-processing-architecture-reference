@@ -32,12 +32,11 @@ class AwsKmsClientUtils {
   /**
    * @brief Converts Kms errors to ExecutionResult.
    *
-   * @param dynamo_db_error Kms error codes.
+   * @param error Kms error.
    * @return core::ExecutionResult The Kms error code converted to the
    * execution result.
    */
   static core::ExecutionResult ConvertKmsError(
-      const Aws::KMS::KMSErrors& kms_error,
-      const std::string& error_message) noexcept;
+      const Aws::Client::AWSError<Aws::KMS::KMSErrors>& error) noexcept;
 };
 }  // namespace google::scp::cpio::client_providers

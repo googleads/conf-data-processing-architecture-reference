@@ -21,6 +21,7 @@
 #include <string>
 #include <unordered_set>
 #include <utility>
+#include <vector>
 
 #include "absl/strings/str_cat.h"
 #include "core/interface/async_context.h"
@@ -92,6 +93,7 @@ using std::shared_ptr;
 using std::string;
 using std::unique_ptr;
 using std::unordered_set;
+using std::vector;
 using testing::NiceMock;
 using testing::UnorderedElementsAre;
 
@@ -416,6 +418,35 @@ TEST_F(ConfigurationFetcherTest, GetBoolNameSyncSucceeded) {
 TEST_F(ConfigurationFetcherTest,
        GetBoolByNameSyncFailedDueToEmptyParameterName) {
   EXPECT_THAT(fetcher_->GetBoolByNameSync(""),
+              ResultIs(FailureExecutionResult(
+                  SC_CONFIGURATION_FETCHER_INVALID_PARAMETER_NAME)));
+}
+
+TEST_F(ConfigurationFetcherTest, GetParameterListByNameSucceeded) {
+  auto list_param_name = "list_param";
+  ExpectGetParameter(SuccessExecutionResult(), list_param_name, "p1,p2,p3");
+  atomic<bool> finished = false;
+  auto get_context = AsyncContext<string, vector<string>>(
+      make_shared<string>(list_param_name),
+      [&finished](AsyncContext<string, vector<string>> context) {
+        EXPECT_SUCCESS(context.result);
+        EXPECT_THAT(*context.response, testing::ElementsAre("p1", "p2", "p3"));
+        finished = true;
+      });
+  fetcher_->GetParameterListByName(get_context);
+  WaitUntil([&]() { return finished.load(); });
+}
+
+TEST_F(ConfigurationFetcherTest, GetParameterListByNameSyncSucceeded) {
+  auto list_param_name = "list_param";
+  ExpectGetParameter(SuccessExecutionResult(), list_param_name, "p1,p2,p3");
+  EXPECT_THAT(fetcher_->GetParameterListByNameSync(list_param_name),
+              IsSuccessfulAndHolds(testing::ElementsAre("p1", "p2", "p3")));
+}
+
+TEST_F(ConfigurationFetcherTest,
+       GetParameterListByNameSyncFailedDueToEmptyParameterName) {
+  EXPECT_THAT(fetcher_->GetParameterListByNameSync(""),
               ResultIs(FailureExecutionResult(
                   SC_CONFIGURATION_FETCHER_INVALID_PARAMETER_NAME)));
 }

@@ -17,6 +17,7 @@
 
 #include <string>
 #include <unordered_set>
+#include <vector>
 
 #include "core/interface/async_context.h"
 #include "core/interface/logger_interface.h"
@@ -107,6 +108,25 @@ class ConfigurationFetcherInterface : public core::ServiceInterface {
    */
   virtual void GetBoolByName(
       core::AsyncContext<std::string, bool> context) noexcept = 0;
+
+  /**
+   * @brief Gets a parameter by name and converts it into a vector of strings.
+   *
+   * @param parameter_name Name of the parameter to get.
+   * @return core::ExecutionResultOr<std::vector<std::string>> the parameter
+   * list or result.
+   */
+  virtual core::ExecutionResultOr<std::vector<std::string>>
+  GetParameterListByNameSync(std::string parameter_name) noexcept = 0;
+
+  /**
+   * @brief Get parameter by name and converts it into a vector of strings.
+   *
+   * @param context the async context for the operation.
+   */
+  virtual void GetParameterListByName(
+      core::AsyncContext<std::string, std::vector<std::string>>
+          context) noexcept = 0;
 
   /**** Shared configurations start */
   /**

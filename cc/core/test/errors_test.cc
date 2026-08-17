@@ -86,4 +86,50 @@ TEST(ERRORS, NoAssociatedPublicErrorCode) {
   auto public_error_code = GetPublicErrorCode(COMPONENT_NAME_ERROR);
   EXPECT_EQ(public_error_code, COMPONENT_NAME_ERROR);
 }
+
+TEST(ERRORS, GetErrorHttpStatusCode_Success) {
+  EXPECT_EQ(GetErrorHttpStatusCode(SC_OK), HttpStatusCode::OK);
+}
+
+TEST(ERRORS, GetErrorHttpStatusCode_Unknown) {
+  EXPECT_EQ(GetErrorHttpStatusCode(SC_UNKNOWN),
+            HttpStatusCode::INTERNAL_SERVER_ERROR);
+}
+
+TEST(ERRORS, GetErrorHttpStatusCode_Registered) {
+  REGISTER_COMPONENT_CODE(COMPONENT_NAME, 0x7FFF)
+  DEFINE_ERROR_CODE(COMPONENT_NAME_ERROR, COMPONENT_NAME, 0x0001,
+                    "Component error message test", HttpStatusCode::BAD_REQUEST)
+
+  EXPECT_EQ(GetErrorHttpStatusCode(COMPONENT_NAME_ERROR),
+            HttpStatusCode::BAD_REQUEST);
+}
+
+TEST(ERRORS, GetErrorHttpStatusCode_Unregistered) {
+  // Use a code that is unlikely to be registered
+  uint64_t unregistered_code = MakeErrorCode(0x7FFF, 0xEEEE);
+  EXPECT_EQ(GetErrorHttpStatusCode(unregistered_code),
+            HttpStatusCode::INTERNAL_SERVER_ERROR);
+}
+
+TEST(ERRORS, GetErrorMessage_UnregisteredComponentNoMutation) {
+  uint64_t unregistered_component = 0x7AAA;
+  uint64_t unregistered_code = MakeErrorCode(unregistered_component, 0x0001);
+
+  // Ensure the component is not in GetGlobalErrorCodes() before calling
+  EXPECT_EQ(GetGlobalErrorCodes().find(unregistered_component),
+            GetGlobalErrorCodes().end());
+
+  // Calling GetErrorMessage should return "InvalidErrorCode"
+  EXPECT_STREQ("InvalidErrorCode", GetErrorMessage(unregistered_code));
+
+  // Ensure GetGlobalErrorCodes() was not mutated (component still not in map)
+  EXPECT_EQ(GetGlobalErrorCodes().find(unregistered_component),
+            GetGlobalErrorCodes().end());
+}
+
+TEST(ERRORS, GetErrorMessage_UnregisteredCodeInRegisteredComponent) {
+  uint64_t unregistered_code = MakeErrorCode(0x7FFF, 0x1234);
+  EXPECT_STREQ("InvalidErrorCode", GetErrorMessage(unregistered_code));
+}
 }  // namespace google::scp::core::errors::test

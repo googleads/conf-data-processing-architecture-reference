@@ -388,7 +388,7 @@ AutoRefreshKeyFetcherWithCache::GetValidKeys(
                                ? KeyCacheStatus::kValidKeyCacheHit
                                : KeyCacheStatus::kValidKeyCacheMiss);
 
-  if (keys_in_cache.Successful() || !OnDemandFetchingEnabled()) {
+  if (keys_in_cache.Successful()) {
     return keys_in_cache;
   }
 
@@ -456,10 +456,6 @@ void AutoRefreshKeyFetcherWithCache::FetchAndCacheKeysetMetadataRemote(
               "SID keyset metadata fetching failed for keyset %s",
               keyset_name_.c_str());
   }
-}
-
-bool AutoRefreshKeyFetcherWithCache::OnDemandFetchingEnabled() noexcept {
-  return key_fetcher_options_.enable_on_demand_fetching_for_hmac_key;
 }
 
 void AutoRefreshKeyFetcherWithCache::MarkFetchingFinished() noexcept {

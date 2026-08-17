@@ -136,9 +136,19 @@ class TeeAwsKmsClientProviderTest : public ScpTestBase {
 
   void TearDown() override { EXPECT_SUCCESS(client_->Stop()); }
 
-  void ExpectCallGetRoleCredentials() {
+  void ExpectCallGetRoleCredentials(
+      const string& expected_audience = "",
+      const vector<string>& expected_key_ids = {}) {
     EXPECT_CALL(*mock_credentials_provider_, GetRoleCredentials)
         .WillOnce([=](auto& context) {
+          EXPECT_EQ(context.request->target_audience_for_web_identity,
+                    expected_audience);
+          if (expected_key_ids.empty()) {
+            EXPECT_EQ(context.request->key_ids, nullptr);
+          } else {
+            ASSERT_NE(context.request->key_ids, nullptr);
+            EXPECT_EQ(*context.request->key_ids, expected_key_ids);
+          }
           context.response = make_shared<GetRoleCredentialsResponse>();
           context.response->access_key_id =
               make_shared<string>("access_key_id");
@@ -261,7 +271,7 @@ TEST_F(TeeAwsKmsClientProviderTest, SuccessToDecrypt) {
 }
 
 TEST_F(TeeAwsKmsClientProviderTest, SuccessToDecryptWithKeyIdsAndAudience) {
-  ExpectCallGetRoleCredentials();
+  ExpectCallGetRoleCredentials("testAudience", {"test1", "test2"});
   EXPECT_SUCCESS(client_->Init());
   EXPECT_SUCCESS(client_->Run());
 
@@ -272,6 +282,31 @@ TEST_F(TeeAwsKmsClientProviderTest, SuccessToDecryptWithKeyIdsAndAudience) {
   kms_decrpyt_request->set_ciphertext(kCiphertext);
   kms_decrpyt_request->mutable_key_ids()->Add("test1");
   kms_decrpyt_request->mutable_key_ids()->Add("test2");
+  kms_decrpyt_request->set_target_audience_for_web_identity("testAudience");
+  atomic<bool> condition = false;
+
+  AsyncContext<DecryptRequest, DecryptResponse> context(
+      kms_decrpyt_request,
+      [&](AsyncContext<DecryptRequest, DecryptResponse>& context) {
+        EXPECT_SUCCESS(context.result);
+        EXPECT_EQ(context.response->plaintext(), kPlaintext);
+        condition = true;
+      });
+
+  client_->Decrypt(context);
+  WaitUntil([&]() { return condition.load(); });
+}
+
+TEST_F(TeeAwsKmsClientProviderTest, SuccessToDecryptWithAudienceOnly) {
+  ExpectCallGetRoleCredentials("testAudience");
+  EXPECT_SUCCESS(client_->Init());
+  EXPECT_SUCCESS(client_->Run());
+
+  auto kms_decrpyt_request = make_shared<DecryptRequest>();
+  kms_decrpyt_request->set_kms_region(kRegion);
+  kms_decrpyt_request->set_account_identity(kAssumeRoleArn);
+  kms_decrpyt_request->set_key_resource_name(kKeyArn);
+  kms_decrpyt_request->set_ciphertext(kCiphertext);
   kms_decrpyt_request->set_target_audience_for_web_identity("testAudience");
   atomic<bool> condition = false;
 

@@ -24,6 +24,7 @@
 
 #include "error_codes.h"
 
+using Aws::Client::AWSError;
 using Aws::STS::STSErrors;
 using google::scp::core::FailureExecutionResult;
 using google::scp::core::common::kZeroUuid;
@@ -39,9 +40,9 @@ static constexpr char kSTSErrorConverter[] = "STSErrorConverter";
 
 namespace google::scp::cpio::client_providers {
 FailureExecutionResult STSErrorConverter::ConvertSTSError(
-    const STSErrors& error, const std::string& error_message) {
+    const AWSError<STSErrors>& error) {
   auto failure = FailureExecutionResult(SC_AWS_INTERNAL_SERVICE_ERROR);
-  switch (error) {
+  switch (error.GetErrorType()) {
     case STSErrors::VALIDATION:
       failure = FailureExecutionResult(SC_AWS_VALIDATION_FAILED);
       break;
@@ -67,8 +68,10 @@ FailureExecutionResult STSErrorConverter::ConvertSTSError(
   }
 
   SCP_ERROR(kSTSErrorConverter, kZeroUuid, failure,
-            "AWS cloud service error: code is %d, and error message is %s.",
-            error, error_message.c_str());
+            "AWS cloud service error: code is %d, exception name is '%s', and "
+            "error message is '%s'.",
+            error.GetErrorType(), error.GetExceptionName().c_str(),
+            error.GetMessage().c_str());
   return failure;
 }
 }  // namespace google::scp::cpio::client_providers

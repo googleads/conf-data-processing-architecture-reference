@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 locals {
-  collector_instance_group_filter = "resource.type=\"gce_instance\" AND metadata.user_labels.\"otel_collector\"=\"true\""
+  collector_instance_group_filter = "resource.type=\"gce_instance\" AND metadata.user_labels.\"otel_collector\"=\"true\" AND metadata.user_labels.\"environment\"=\"${var.environment}\""
 }
 
 # Disable follwing alert policies using denominator.

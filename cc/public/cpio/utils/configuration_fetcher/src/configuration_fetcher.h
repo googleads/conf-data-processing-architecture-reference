@@ -102,6 +102,13 @@ class ConfigurationFetcher : public ConfigurationFetcherInterface {
   void GetBoolByName(
       core::AsyncContext<std::string, bool> context) noexcept override;
 
+  core::ExecutionResultOr<std::vector<std::string>> GetParameterListByNameSync(
+      std::string parameter_name) noexcept override;
+
+  void GetParameterListByName(
+      core::AsyncContext<std::string, std::vector<std::string>>
+          context) noexcept override;
+
   core::ExecutionResultOr<LogOption> GetCommonLogOptionSync(
       GetConfigurationRequest request) noexcept override;
 

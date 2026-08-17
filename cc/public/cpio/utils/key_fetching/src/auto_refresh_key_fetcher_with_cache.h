@@ -125,8 +125,6 @@ class AutoRefreshKeyFetcherWithCache : public KeyFetcherWithCacheInterface {
   core::ExecutionResult ValidateKeySelectionTimestamp(
       core::Timestamp key_selection_timestamp_ns) noexcept;
 
-  /// Check if on-demand fetching is enabled.
-  bool OnDemandFetchingEnabled() noexcept;
   /// Set the fetching status to FINISHED.
   void MarkFetchingFinished() noexcept;
   /**

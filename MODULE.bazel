@@ -282,3 +282,14 @@ exports_files(["terraform"])
     sha256 = "c71fd5d500a7e4d869bf5d12176c72d1dfc00440b862116797694361671f77c8",
     url = "https://releases.hashicorp.com/terraform/1.12.0/terraform_1.12.0_linux_amd64.zip",
 )
+
+#### DEPENDABOT ANNOTATIONS: BEGIN ####
+# Dependabot copies the repo into a sandbox to build and inspect. By default it doesn't
+# copy all the artifacts, so we can use annotations to tell it what else to copy.
+# The files listed below are needed for dependency resolution.
+
+# dependabot: patches = [
+#  "//cc/public/cpio/build_deps/shared:base_runtime_image_packages_manifest.lock.json",
+#  "//cc/public/cpio/build_deps/shared:base_runtime_image_packages_manifest.yaml"
+# ]
+#### DEPENDABOT ANNOTATIONS: END ####

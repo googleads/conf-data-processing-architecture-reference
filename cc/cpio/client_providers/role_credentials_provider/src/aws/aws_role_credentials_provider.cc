@@ -206,9 +206,8 @@ void AwsRoleCredentialsProvider::OnGetRoleCredentialsCallback(
     const AssumeRoleOutcome& get_credentials_outcome,
     const shared_ptr<const AsyncCallerContext> async_context) noexcept {
   if (!get_credentials_outcome.IsSuccess()) {
-    auto execution_result = STSErrorConverter::ConvertSTSError(
-        get_credentials_outcome.GetError().GetErrorType(),
-        get_credentials_outcome.GetError().GetMessage());
+    auto execution_result =
+        STSErrorConverter::ConvertSTSError(get_credentials_outcome.GetError());
 
     get_credentials_context.result = execution_result;
 
@@ -255,9 +254,8 @@ void AwsRoleCredentialsProvider::OnGetRoleCredentialsWithWebIdentityCallback(
     const AssumeRoleWithWebIdentityOutcome& get_credentials_outcome,
     const shared_ptr<const AsyncCallerContext> async_context) noexcept {
   if (!get_credentials_outcome.IsSuccess()) {
-    auto execution_result = STSErrorConverter::ConvertSTSError(
-        get_credentials_outcome.GetError().GetErrorType(),
-        get_credentials_outcome.GetError().GetMessage());
+    auto execution_result =
+        STSErrorConverter::ConvertSTSError(get_credentials_outcome.GetError());
 
     get_credentials_context.result = execution_result;
 

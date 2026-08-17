@@ -20,6 +20,7 @@
 
 #include <string>
 #include <unordered_set>
+#include <vector>
 
 #include "core/interface/async_context.h"
 #include "core/interface/logger_interface.h"
@@ -70,6 +71,13 @@ class MockConfigurationFetcherTmpl : public ConfigurationFetcherInterface {
               (noexcept, override));
 
   MOCK_METHOD(core::ExecutionResultOr<bool>, GetBoolByNameSync, (std::string),
+              (noexcept, override));
+
+  MOCK_METHOD(core::ExecutionResultOr<std::vector<std::string>>,
+              GetParameterListByNameSync, (std::string), (noexcept, override));
+
+  MOCK_METHOD(void, GetParameterListByName,
+              ((core::AsyncContext<std::string, std::vector<std::string>>)),
               (noexcept, override));
 
   MOCK_METHOD(core::ExecutionResultOr<LogOption>, GetCommonLogOptionSync,

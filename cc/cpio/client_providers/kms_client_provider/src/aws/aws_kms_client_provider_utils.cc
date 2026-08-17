@@ -33,10 +33,18 @@
 #include "core/common/uuid/src/uuid.h"
 #include "cpio/common/src/aws/error_codes.h"
 
+using Aws::Client::AWSError;
 using Aws::KMS::KMSErrors;
 using google::scp::core::ExecutionResult;
 using google::scp::core::FailureExecutionResult;
 using google::scp::core::common::kZeroUuid;
+
+using google::scp::core::errors::SC_AWS_INTERNAL_SERVICE_ERROR;
+using google::scp::core::errors::SC_AWS_INVALID_CREDENTIALS;
+using google::scp::core::errors::SC_AWS_INVALID_REQUEST;
+using google::scp::core::errors::SC_AWS_REQUEST_LIMIT_REACHED;
+using google::scp::core::errors::SC_AWS_SERVICE_UNAVAILABLE;
+using google::scp::core::errors::SC_AWS_VALIDATION_FAILED;
 
 namespace {
 /// Filename for logging errors
@@ -45,47 +53,44 @@ constexpr char kAwsKmsErrorConverter[] = "AwsKmsErrorConverter";
 
 namespace google::scp::cpio::client_providers {
 core::ExecutionResult AwsKmsClientUtils::ConvertKmsError(
-    const KMSErrors& kms_error, const std::string& error_message) noexcept {
+    const AWSError<KMSErrors>& error) noexcept {
   auto failure =
       FailureExecutionResult(core::errors::SC_AWS_INTERNAL_SERVICE_ERROR);
-  switch (kms_error) {
-    case KMSErrors::VALIDATION:
-      failure = FailureExecutionResult(core::errors::SC_AWS_VALIDATION_FAILED);
-      break;
+  switch (error.GetErrorType()) {
     case KMSErrors::ACCESS_DENIED:
     case KMSErrors::INVALID_CLIENT_TOKEN_ID:
-      failure =
-          FailureExecutionResult(core::errors::SC_AWS_INVALID_CREDENTIALS);
+      failure = FailureExecutionResult(SC_AWS_INVALID_CREDENTIALS);
       break;
+    case KMSErrors::INCORRECT_KEY:
+    case KMSErrors::INVALID_ARN:
+    case KMSErrors::INVALID_CIPHERTEXT:
     case KMSErrors::INVALID_PARAMETER_COMBINATION:
-    case KMSErrors::INVALID_QUERY_PARAMETER:
     case KMSErrors::INVALID_PARAMETER_VALUE:
+    case KMSErrors::INVALID_QUERY_PARAMETER:
     case KMSErrors::MALFORMED_QUERY_STRING:
-      failure = FailureExecutionResult(core::errors::SC_AWS_INVALID_REQUEST);
-      break;
-    case KMSErrors::SERVICE_UNAVAILABLE:
-    case KMSErrors::NETWORK_CONNECTION:
-      failure =
-          FailureExecutionResult(core::errors::SC_AWS_SERVICE_UNAVAILABLE);
+      failure = FailureExecutionResult(SC_AWS_INVALID_REQUEST);
       break;
     case KMSErrors::THROTTLING:
-      failure =
-          FailureExecutionResult(core::errors::SC_AWS_REQUEST_LIMIT_REACHED);
+      failure = FailureExecutionResult(SC_AWS_REQUEST_LIMIT_REACHED);
       break;
-    case KMSErrors::INVALID_ARN:
-      failure = FailureExecutionResult(core::errors::SC_AWS_INVALID_REQUEST);
+    case KMSErrors::KEY_UNAVAILABLE:
+    case KMSErrors::NETWORK_CONNECTION:
+    case KMSErrors::SERVICE_UNAVAILABLE:
+      failure = FailureExecutionResult(SC_AWS_SERVICE_UNAVAILABLE);
       break;
-    case KMSErrors::INVALID_CIPHERTEXT:
-      failure = FailureExecutionResult(core::errors::SC_AWS_INVALID_REQUEST);
+    case KMSErrors::VALIDATION:
+      failure = FailureExecutionResult(SC_AWS_VALIDATION_FAILED);
       break;
     default:
-      failure =
-          FailureExecutionResult(core::errors::SC_AWS_INTERNAL_SERVICE_ERROR);
+      failure = FailureExecutionResult(SC_AWS_INTERNAL_SERVICE_ERROR);
   }
 
   SCP_ERROR(kAwsKmsErrorConverter, kZeroUuid, failure,
-            "AWS cloud service error: code is %d, and error message is %s.",
-            kms_error, error_message.c_str());
+            "AWS cloud service error: code is %d, exception name is '%s', and "
+            "error message is '%s'.",
+            error.GetErrorType(), error.GetExceptionName().c_str(),
+            error.GetMessage().c_str());
   return failure;
 }
+
 }  // namespace google::scp::cpio::client_providers

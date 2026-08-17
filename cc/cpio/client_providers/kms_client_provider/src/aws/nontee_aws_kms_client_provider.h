@@ -51,8 +51,7 @@ class NonteeAwsKmsClientProvider : public KmsClientProviderInterface {
           role_credentials_provider,
       const std::shared_ptr<core::AsyncExecutorInterface>& io_async_executor,
       const std::shared_ptr<core::AsyncExecutorInterface>& cpu_async_executor)
-      : options_(options),
-        role_credentials_provider_(role_credentials_provider),
+      : role_credentials_provider_(role_credentials_provider),
         io_async_executor_(io_async_executor),
         cpu_async_executor_(cpu_async_executor) {}
 
@@ -108,8 +107,6 @@ class NonteeAwsKmsClientProvider : public KmsClientProviderInterface {
   virtual std::shared_ptr<Aws::KMS::KMSClient> GetKmsClient(
       const Aws::Auth::AWSCredentials& aws_credentials,
       const std::string& kms_region) noexcept;
-
-  std::shared_ptr<KmsClientOptions> options_;
 
   /// Credentials provider.
   const std::shared_ptr<RoleCredentialsProviderInterface>

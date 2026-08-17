@@ -79,6 +79,9 @@ constexpr absl::string_view kAwsKmsResourceName =
 constexpr absl::string_view kAwsKmsRegion = "us-east-1";
 constexpr absl::string_view kRoleArn =
     "arn:aws:iam::123456789012:role/test-role";
+constexpr absl::string_view kContainerImageSignatureKeyId =
+    "aws_kms_default_signatures";
+constexpr absl::string_view kAudience = "aws_kms_default_audience";
 
 CloudWrappedKey BuildCloudWrappedKey(const AwsWrappedKey& aws_wrapped_key) {
   CloudWrappedKey cloud_wrapped_key;
@@ -87,13 +90,20 @@ CloudWrappedKey BuildCloudWrappedKey(const AwsWrappedKey& aws_wrapped_key) {
 }
 
 WrappedKeyHandlerOptions CreateWrappedKeyHandlerOptions(
-    bool enable_decryption_lock = true, bool enable_cache = true) {
+    bool enable_decryption_lock = true, bool enable_cache = true,
+    const std::vector<std::string>& image_signature_key_ids = {std::string(
+        kContainerImageSignatureKeyId)},
+    const std::string& aws_target_audience_for_web_identity =
+        std::string(kAudience)) {
   WrappedKeyHandlerOptions options;
   options.enable_decryption_lock = enable_decryption_lock;
   options.enable_cache = enable_cache;
   options.key_cache_lifetime = std::chrono::seconds(1800);
   options.key_failure_cache_lifetime = std::chrono::seconds(300);
   options.key_decryption_waiting_timeout = std::chrono::milliseconds(200);
+  options.image_signature_key_ids = image_signature_key_ids;
+  options.aws_target_audience_for_web_identity =
+      aws_target_audience_for_web_identity;
   return options;
 }
 
@@ -123,6 +133,10 @@ class AwsWrappedKeyHandlerWithCacheTest : public ScpTestBase {
         string(kAwsKmsResourceName));
     expected_decrypt_request_.set_kms_region(string(kAwsKmsRegion));
     expected_decrypt_request_.set_account_identity(string(kRoleArn));
+    expected_decrypt_request_.add_key_ids(
+        string(kContainerImageSignatureKeyId));
+    expected_decrypt_request_.set_target_audience_for_web_identity(
+        string(kAudience));
   }
 
   void TearDown() override {
@@ -228,6 +242,105 @@ TEST_F(AwsWrappedKeyHandlerWithCacheTest,
       .WillOnce(Return(response));
 
   wrapped_key_handler_.GetKey(BuildCloudWrappedKey(aws_wrapped_key_));
+}
+
+TEST_F(AwsWrappedKeyHandlerWithCacheTest,
+       CreateDecryptRequestWithEmptySignatures) {
+  ExpectOtelEncryptionKeyFetchingRequestMetricPush(1);
+  ExpectOtelEncryptionKeyFetchingLatencyMetricPush(1);
+  ExpectOtelEncryptionKeyCacheStatusMetricPush(
+      1, KeyCacheStatus::kValidKeyCacheMiss);
+  ExpectOtelEncryptionKeyFetchingErrorMetricPush(0);
+
+  AwsWrappedKeyHandlerWithCache handler_without_signatures(
+      async_executor_, mock_kms_client_,
+      CreateWrappedKeyHandlerOptions(
+          /*enable_decryption_lock=*/true, /*enable_cache=*/true,
+          /*image_signature_key_ids=*/{},
+          /*aws_target_audience_for_web_identity=*/""),
+      mock_metric_client_);
+  EXPECT_SUCCESS(handler_without_signatures.Init());
+  EXPECT_SUCCESS(handler_without_signatures.Run());
+
+  DecryptRequest expected_request_without_signatures =
+      expected_decrypt_request_;
+  expected_request_without_signatures.clear_key_ids();
+  expected_request_without_signatures.clear_target_audience_for_web_identity();
+
+  DecryptResponse response;
+  response.set_plaintext("decrypted_dek");
+  EXPECT_CALL(mock_kms_client_,
+              DecryptSync(EqualsProto(expected_request_without_signatures)))
+      .WillOnce(Return(response));
+
+  handler_without_signatures.GetKey(BuildCloudWrappedKey(aws_wrapped_key_));
+  EXPECT_SUCCESS(handler_without_signatures.Stop());
+}
+
+TEST_F(AwsWrappedKeyHandlerWithCacheTest,
+       CreateDecryptRequestWithMultipleSignatures) {
+  ExpectOtelEncryptionKeyFetchingRequestMetricPush(1);
+  ExpectOtelEncryptionKeyFetchingLatencyMetricPush(1);
+  ExpectOtelEncryptionKeyCacheStatusMetricPush(
+      1, KeyCacheStatus::kValidKeyCacheMiss);
+  ExpectOtelEncryptionKeyFetchingErrorMetricPush(0);
+
+  std::vector<std::string> signatures = {"sig1", "sig2", "sig3"};
+  AwsWrappedKeyHandlerWithCache handler_with_multiple_signatures(
+      async_executor_, mock_kms_client_,
+      CreateWrappedKeyHandlerOptions(
+          /*enable_decryption_lock=*/true, /*enable_cache=*/true,
+          /*image_signature_key_ids=*/signatures,
+          /*aws_target_audience_for_web_identity=*/string(kAudience)),
+      mock_metric_client_);
+  EXPECT_SUCCESS(handler_with_multiple_signatures.Init());
+  EXPECT_SUCCESS(handler_with_multiple_signatures.Run());
+
+  DecryptRequest expected_request = expected_decrypt_request_;
+  expected_request.clear_key_ids();
+  for (const auto& sig : signatures) {
+    expected_request.add_key_ids(sig);
+  }
+
+  DecryptResponse response;
+  response.set_plaintext("decrypted_dek");
+  EXPECT_CALL(mock_kms_client_, DecryptSync(EqualsProto(expected_request)))
+      .WillOnce(Return(response));
+
+  handler_with_multiple_signatures.GetKey(
+      BuildCloudWrappedKey(aws_wrapped_key_));
+  EXPECT_SUCCESS(handler_with_multiple_signatures.Stop());
+}
+
+TEST_F(AwsWrappedKeyHandlerWithCacheTest,
+       CreateDecryptRequestWithEmptyAudience) {
+  ExpectOtelEncryptionKeyFetchingRequestMetricPush(1);
+  ExpectOtelEncryptionKeyFetchingLatencyMetricPush(1);
+  ExpectOtelEncryptionKeyCacheStatusMetricPush(
+      1, KeyCacheStatus::kValidKeyCacheMiss);
+  ExpectOtelEncryptionKeyFetchingErrorMetricPush(0);
+
+  AwsWrappedKeyHandlerWithCache handler_without_audience(
+      async_executor_, mock_kms_client_,
+      CreateWrappedKeyHandlerOptions(
+          /*enable_decryption_lock=*/true, /*enable_cache=*/true,
+          /*image_signature_key_ids=*/{string(kContainerImageSignatureKeyId)},
+          /*aws_target_audience_for_web_identity=*/""),
+      mock_metric_client_);
+  EXPECT_SUCCESS(handler_without_audience.Init());
+  EXPECT_SUCCESS(handler_without_audience.Run());
+
+  DecryptRequest expected_request_without_audience = expected_decrypt_request_;
+  expected_request_without_audience.clear_target_audience_for_web_identity();
+
+  DecryptResponse response;
+  response.set_plaintext("decrypted_dek");
+  EXPECT_CALL(mock_kms_client_,
+              DecryptSync(EqualsProto(expected_request_without_audience)))
+      .WillOnce(Return(response));
+
+  handler_without_audience.GetKey(BuildCloudWrappedKey(aws_wrapped_key_));
+  EXPECT_SUCCESS(handler_without_audience.Stop());
 }
 
 TEST_F(AwsWrappedKeyHandlerWithCacheTest,

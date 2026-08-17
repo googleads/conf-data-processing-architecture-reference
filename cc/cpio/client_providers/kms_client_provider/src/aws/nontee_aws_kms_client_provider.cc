@@ -185,15 +185,7 @@ void NonteeAwsKmsClientProvider::Decrypt(
 
   auto request = make_shared<GetRoleCredentialsRequest>();
   request->account_identity = make_shared<AccountIdentity>(account_identity);
-  auto aws_options = std::dynamic_pointer_cast<AwsKmsClientOptions>(options_);
-  if (aws_options) {
-    request->target_audience_for_web_identity =
-        aws_options->target_audience_for_web_identity;
-  }
-  if (!target_audience_for_web_identity.empty()) {
-    request->target_audience_for_web_identity =
-        std::move(target_audience_for_web_identity);
-  }
+  request->target_audience_for_web_identity = target_audience_for_web_identity;
   if (!key_ids.empty()) {
     request->key_ids =
         make_shared<vector<string>>(key_ids.begin(), key_ids.end());
@@ -272,9 +264,8 @@ void NonteeAwsKmsClientProvider::DecryptInternal(
 
   auto decrypt_outcome = kms_client->Decrypt(decrypt_request);
   if (!decrypt_outcome.IsSuccess()) {
-    decrypt_context.result = AwsKmsClientUtils::ConvertKmsError(
-        decrypt_outcome.GetError().GetErrorType(),
-        decrypt_outcome.GetError().GetMessage());
+    decrypt_context.result =
+        AwsKmsClientUtils::ConvertKmsError(decrypt_outcome.GetError());
 
     SCP_ERROR_CONTEXT(kNonteeAwsKmsClientProvider, decrypt_context,
                       decrypt_context.result,

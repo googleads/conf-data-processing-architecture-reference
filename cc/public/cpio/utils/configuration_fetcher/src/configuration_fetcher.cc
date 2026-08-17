@@ -101,6 +101,7 @@ using std::make_shared;
 using std::shared_ptr;
 using std::string;
 using std::unordered_set;
+using std::vector;
 using std::placeholders::_1;
 using std::placeholders::_2;
 
@@ -350,6 +351,50 @@ void ConfigurationFetcher::GetBoolByName(
               ConfigurationFetcherUtils::StringToBool(*string_context.response);
           if (convert_result.Successful()) {
             context.response = std::make_shared<bool>(convert_result.release());
+          } else {
+            context.result = convert_result.result();
+          }
+        }
+        context.Finish();
+      });
+
+  GetConfiguration(string_context);
+}
+
+ExecutionResultOr<vector<string>>
+ConfigurationFetcher::GetParameterListByNameSync(
+    string parameter_name) noexcept {
+  vector<string> parameter;
+  auto execution_result = SyncUtils::AsyncToSync2<string, vector<string>>(
+      bind(&ConfigurationFetcher::GetParameterListByName, this, _1),
+      parameter_name, parameter);
+  RETURN_AND_LOG_IF_FAILURE(execution_result, kConfigurationFetcher, kZeroUuid,
+                            "Failed to GetParameterListByName for %s.",
+                            parameter_name.c_str());
+  return parameter;
+}
+
+void ConfigurationFetcher::GetParameterListByName(
+    AsyncContext<string, vector<string>> context) noexcept {
+  if (context.request->empty()) {
+    context.result =
+        FailureExecutionResult(SC_CONFIGURATION_FETCHER_INVALID_PARAMETER_NAME);
+    SCP_ERROR_CONTEXT(kConfigurationFetcher, context, context.result,
+                      "Parameter name is empty.");
+    context.Finish();
+    return;
+  }
+  AsyncContext<std::string, std::string> string_context(
+      context.request,
+      [context](
+          core::AsyncContext<std::string, std::string> string_context) mutable {
+        context.result = string_context.result;
+        if (context.result.Successful()) {
+          auto convert_result =
+              ConfigurationFetcherUtils::StringToList(*string_context.response);
+          if (convert_result.Successful()) {
+            context.response =
+                std::make_shared<vector<string>>(convert_result.release());
           } else {
             context.result = convert_result.result();
           }
