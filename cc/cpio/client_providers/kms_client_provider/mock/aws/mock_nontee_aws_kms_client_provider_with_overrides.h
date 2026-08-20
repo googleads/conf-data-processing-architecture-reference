@@ -35,19 +35,22 @@ class MockNonteeAwsKmsClientProviderWithOverrides
           role_credential_provider,
       const std::shared_ptr<Aws::KMS::KMSClient> mock_kms_client,
       const std::shared_ptr<core::AsyncExecutorInterface>& io_async_executor,
-      const std::shared_ptr<core::AsyncExecutorInterface>& cpu_async_executor)
-      : NonteeAwsKmsClientProvider(std::make_shared<KmsClientOptions>(),
-                                   role_credential_provider, io_async_executor,
-                                   cpu_async_executor) {
+      const std::shared_ptr<core::AsyncExecutorInterface>& cpu_async_executor,
+      const std::shared_ptr<KmsClientOptions>& options =
+          std::make_shared<KmsClientOptions>())
+      : NonteeAwsKmsClientProvider(options, role_credential_provider,
+                                   io_async_executor, cpu_async_executor) {
     kms_client_ = mock_kms_client;
   }
 
   std::shared_ptr<Aws::KMS::KMSClient> GetKmsClient(
       const Aws::Auth::AWSCredentials& aws_credentials,
       const std::string& kms_region) noexcept override {
+    get_kms_client_call_count_++;
     return kms_client_;
   }
 
   std::shared_ptr<Aws::KMS::KMSClient> kms_client_;
+  std::atomic<size_t> get_kms_client_call_count_{0};
 };
 }  // namespace google::scp::cpio::client_providers::mock

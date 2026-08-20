@@ -29,6 +29,7 @@
 #include <aws/kms/KMSErrors.h>
 #include <aws/kms/model/DecryptRequest.h>
 
+#include "absl/strings/str_cat.h"
 #include "core/async_executor/src/aws/aws_async_executor.h"
 #include "core/utils/src/base64.h"
 #include "cpio/client_providers/interface/role_credentials_provider_interface.h"
@@ -82,6 +83,14 @@ constexpr char kNonteeAwsKmsClientProvider[] = "NonteeAwsKmsClientProvider";
 namespace google::scp::cpio::client_providers {
 
 ExecutionResult NonteeAwsKmsClientProvider::Init() noexcept {
+  if (!kms_client_options_) {
+    auto execution_result =
+        FailureExecutionResult(SC_AWS_KMS_CLIENT_PROVIDER_MISSING_COMPONENT);
+    SCP_ERROR(kNonteeAwsKmsClientProvider, kZeroUuid, execution_result,
+              "Null KmsClientOptions.");
+    return execution_result;
+  }
+
   if (!role_credentials_provider_) {
     auto execution_result =
         FailureExecutionResult(SC_AWS_KMS_CLIENT_PROVIDER_MISSING_COMPONENT);
@@ -106,15 +115,15 @@ ExecutionResult NonteeAwsKmsClientProvider::Init() noexcept {
     return execution_result;
   }
 
-  return SuccessExecutionResult();
+  return aws_kms_service_client_cache_->Init();
 }
 
 ExecutionResult NonteeAwsKmsClientProvider::Run() noexcept {
-  return SuccessExecutionResult();
+  return aws_kms_service_client_cache_->Run();
 }
 
 ExecutionResult NonteeAwsKmsClientProvider::Stop() noexcept {
-  return SuccessExecutionResult();
+  return aws_kms_service_client_cache_->Stop();
 }
 
 void NonteeAwsKmsClientProvider::Decrypt(
@@ -259,8 +268,8 @@ void NonteeAwsKmsClientProvider::DecryptInternal(
   AWSCredentials aws_credentials(response.access_key_id->c_str(),
                                  response.access_key_secret->c_str(),
                                  response.security_token->c_str());
-  auto kms_client =
-      GetKmsClient(aws_credentials, decrypt_context.request->kms_region());
+  auto kms_client = GetOrCreateKmsClient(aws_credentials,
+                                         decrypt_context.request->kms_region());
 
   auto decrypt_outcome = kms_client->Decrypt(decrypt_request);
   if (!decrypt_outcome.IsSuccess()) {
@@ -298,6 +307,35 @@ void NonteeAwsKmsClientProvider::DecryptInternal(
 
   FinishContext(SuccessExecutionResult(), decrypt_context, cpu_async_executor_,
                 AsyncPriority::High);
+}
+
+shared_ptr<KMSClient> NonteeAwsKmsClientProvider::GetOrCreateKmsClient(
+    const AWSCredentials& aws_credentials, const string& kms_region) noexcept {
+  shared_ptr<KMSClient> client_found;
+  string cache_key =
+      absl::StrCat(aws_credentials.GetAWSAccessKeyId(), ":",
+                   aws_credentials.GetAWSSecretKey(), ":",
+                   aws_credentials.GetSessionToken(), ":", kms_region);
+
+  if (kms_client_options_->enable_aws_kms_client_cache) {
+    if (!kms_region.empty() &&
+        aws_kms_service_client_cache_->Find(cache_key, client_found)
+            .Successful()) {
+      return client_found;
+    }
+  }
+
+  auto client = GetKmsClient(aws_credentials, kms_region);
+  if (!kms_client_options_->enable_aws_kms_client_cache || kms_region.empty()) {
+    return client;
+  }
+
+  std::pair<string, shared_ptr<KMSClient>> client_pair;
+  client_pair.first = cache_key;
+  client_pair.second = client;
+  // Ignore insert error
+  aws_kms_service_client_cache_->Insert(client_pair, client_found);
+  return client_found;
 }
 
 shared_ptr<ClientConfiguration>

@@ -164,8 +164,6 @@ class OndemandKeyFetcherWithCache : public KeyFetcherWithCacheInterface {
   void CacheFailureResultForKeyId(
       std::string key_id, core::ExecutionResult failure_result) noexcept;
 
-  /// Check if on-demand fetching lock is enabled.
-  bool OnDemandFetchingLockEnabled() noexcept;
   /// Remove key_id to in_progress cache.
   void MarkFetchingFinished(const std::string& key_id) noexcept;
   /**

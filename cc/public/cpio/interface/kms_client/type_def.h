@@ -28,6 +28,9 @@ struct KmsClientOptions {
   bool enable_gcp_kms_client_cache = false;
   std::chrono::seconds gcp_kms_client_cache_lifetime =
       std::chrono::seconds(3600 * 24);  // 1 day
+  bool enable_aws_kms_client_cache = false;
+  std::chrono::seconds aws_kms_client_cache_lifetime =
+      std::chrono::seconds(60 * 70);  // 70 minutes
 
   // RPC retry config
   bool enable_gcp_kms_client_retries = false;

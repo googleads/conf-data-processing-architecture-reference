@@ -178,7 +178,9 @@ class AutoExpiryConcurrentMap : public ServiceInterface {
     is_running_ = false;
     sync_mutex.unlock();
 
-    current_cancellation_callback_();
+    if (current_cancellation_callback_) {
+      current_cancellation_callback_();
+    }
 
     // Wait until scheduled work (if any) is completed
     auto wait_start_timestamp = TimeProvider::GetSteadyTimestampInNanoseconds();

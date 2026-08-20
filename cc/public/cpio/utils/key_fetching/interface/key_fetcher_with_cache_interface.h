@@ -45,7 +45,7 @@ struct KeyFetcherOptions {
       std::chrono::seconds(24 * 60 * 60);
 
   bool enable_on_demand_fetching_for_hmac_key = true;
-  bool enable_on_demand_fetching_lock_for_encryption_key = false;
+  bool enable_on_demand_fetching_lock_for_encryption_key = true;
   std::chrono::milliseconds on_demand_fetching_waiting_timeout =
       std::chrono::milliseconds(2000);  // 2s
   bool use_read_lock_for_cache_read = false;
@@ -66,7 +66,7 @@ struct KeyFetcherOptions {
       encryption_key_prefetch_config_map;
 
   // Enable the validation of key selection timestamp.
-  bool enable_key_selection_timestamp_validation = false;
+  bool enable_key_selection_timestamp_validation = true;
 };
 
 /// @brief Key returned by KeyFetcherWithCacheInterface

@@ -370,15 +370,13 @@ AutoRefreshKeyFetcherWithCache::ValidateKeySelectionTimestamp(
 core::ExecutionResultOr<vector<Key>>
 AutoRefreshKeyFetcherWithCache::GetValidKeys(
     core::Timestamp key_selection_timestamp_ns) noexcept {
-  if (key_fetcher_options_.enable_key_selection_timestamp_validation) {
-    RETURN_AND_LOG_IF_FAILURE(
-        ValidateKeySelectionTimestamp(key_selection_timestamp_ns),
-        kAutoRefreshKeyFetcherWithCacheComponentName, kZeroUuid,
-        "Key selection timestamp %lld validation failed for keyset %s with "
-        "backfill %d",
-        key_selection_timestamp_ns, keyset_name_.c_str(),
-        keyset_backfill_days_.load());
-  }
+  RETURN_AND_LOG_IF_FAILURE(
+      ValidateKeySelectionTimestamp(key_selection_timestamp_ns),
+      kAutoRefreshKeyFetcherWithCacheComponentName, kZeroUuid,
+      "Key selection timestamp %lld validation failed for keyset %s with "
+      "backfill %d",
+      key_selection_timestamp_ns, keyset_name_.c_str(),
+      keyset_backfill_days_.load());
 
   auto keys_in_cache = GetKeysFromCache(key_selection_timestamp_ns);
 

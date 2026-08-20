@@ -19,30 +19,30 @@ module(
 
 PROTOBUF_VERSION = "33.1"
 
-bazel_dep(name = "rules_cc", version = "0.2.15")
+bazel_dep(name = "rules_cc", version = "0.2.22")
 bazel_dep(name = "abseil-cpp", version = "20250814.2", repo_name = "com_google_absl")
 bazel_dep(name = "bazel_skylib", version = "1.9.0")
 bazel_dep(name = "googletest", version = "1.17.0.bcr.2", repo_name = "com_google_googletest")
 bazel_dep(name = "grpc-java", version = "1.78.0", repo_name = "io_grpc_grpc_java")
-bazel_dep(name = "nlohmann_json", version = "3.12.0.bcr.1")
+bazel_dep(name = "nlohmann_json", version = "3.12.0.bcr.2")
 bazel_dep(name = "onetbb", version = "2021.10.0")
 bazel_dep(name = "protobuf", version = PROTOBUF_VERSION, repo_name = "com_google_protobuf")
-bazel_dep(name = "rules_java", version = "8.16.1")
+bazel_dep(name = "rules_java", version = "9.8.0")
 bazel_dep(name = "rules_jvm_external", version = "6.8")
-bazel_dep(name = "rules_oci", version = "2.2.7")
+bazel_dep(name = "rules_oci", version = "2.3.0")
 bazel_dep(name = "rules_distroless", version = "0.5.1")
 bazel_dep(name = "aspect_bazel_lib", version = "2.9.4")
-bazel_dep(name = "rules_pkg", version = "1.0.1")
+bazel_dep(name = "rules_pkg", version = "1.3.0")
 bazel_dep(name = "rules_python", version = "1.6.3")
 bazel_dep(name = "tink_cc", version = "2.4.0")
-bazel_dep(name = "toolchains_llvm", version = "1.3.0")
+bazel_dep(name = "toolchains_llvm", version = "1.8.0")
 bazel_dep(name = "platforms", version = "1.0.0")
-bazel_dep(name = "boringssl", version = "0.20251124.0")
+bazel_dep(name = "boringssl", version = "0.20260813.0")
 bazel_dep(name = "curl", version = "8.11.0.bcr.5", repo_name = "com_github_curl_curl")
 bazel_dep(name = "opentelemetry-cpp", version = "1.24.0", repo_name = "io_opentelemetry_cpp")
 bazel_dep(name = "google_cloud_cpp", version = "3.5.0", repo_name = "com_github_googleapis_google_cloud_cpp")
 bazel_dep(name = "grpc", version = "1.80.0", repo_name = "com_github_grpc_grpc")
-bazel_dep(name = "googleapis", version = "0.0.0-20260422-20ac242a", repo_name = "com_google_googleapis")
+bazel_dep(name = "googleapis", version = "0.0.0-20260812-f76fc6dc", repo_name = "com_google_googleapis")
 bazel_dep(name = "rules_boost", version = "0.0.0", repo_name = "com_github_nelhage_rules_boost")
 
 # Short term fix for error when running `bazel mod graph`
@@ -73,7 +73,7 @@ use_repo(
 
 # Dev bazel dependencies
 bazel_dep(name = "google_benchmark", version = "1.9.4", dev_dependency = True)
-bazel_dep(name = "buildifier_prebuilt", version = "6.4.0", dev_dependency = True, repo_name = "com_github_bazelbuild_buildtools")
+bazel_dep(name = "buildifier_prebuilt", version = "8.5.1.3", dev_dependency = True, repo_name = "com_github_bazelbuild_buildtools")
 
 # LLVM Hermetic Toolchain
 llvm = use_extension("@toolchains_llvm//toolchain/extensions:llvm.bzl", "llvm", dev_dependency = True)
@@ -237,8 +237,8 @@ http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "ht
 oci = use_extension("@rules_oci//oci:extensions.bzl", "oci")
 oci.pull(
     name = "java_base_21_oci",
-    # Using SHA-256 for reproducibility. The tag is latest-amd64. Latest as of 2025-11-17.
-    digest = "sha256:ed5be62a70c5b99708b4ad0fc53bda628d11e46e917f66720fd218cae8fe1568",
+    # Using SHA-256 for reproducibility. The tag is latest-amd64. Latest as of 2026-08-17.
+    digest = "sha256:5732983ef98fcde2b19a24d0d3b5f46644f059d339740e024f29a169eb8a2a65",
     image = "gcr.io/distroless/java21-debian12",
 )
 oci.pull(

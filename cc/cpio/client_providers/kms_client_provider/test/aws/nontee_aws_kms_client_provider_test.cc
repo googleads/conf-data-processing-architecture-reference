@@ -54,8 +54,10 @@ using google::cmrt::sdk::kms_service::v1::DecryptRequest;
 using google::cmrt::sdk::kms_service::v1::DecryptResponse;
 using google::scp::core::AsyncContext;
 using google::scp::core::AsyncExecutorInterface;
+using google::scp::core::AsyncOperation;
 using google::scp::core::ExecutionStatus;
 using google::scp::core::FailureExecutionResult;
+using google::scp::core::Timestamp;
 using google::scp::core::async_executor::mock::MockAsyncExecutor;
 using google::scp::core::test::ResultIs;
 using google::scp::core::utils::Base64Decode;
@@ -129,6 +131,12 @@ class TeeAwsKmsClientProviderTest : public ScpTestBase {
     mock_kms_client_->decrypt_outcome_mock = decrypt_outcome;
 
     mock_credentials_provider_ = make_shared<MockRoleCredentialsProvider>();
+    mock_cpu_async_executor_->schedule_for_mock =
+        [](const AsyncOperation&, Timestamp,
+           std::function<bool()>& cancellation_callback) {
+          cancellation_callback = []() { return true; };
+          return SuccessExecutionResult();
+        };
     client_ = make_unique<MockNonteeAwsKmsClientProviderWithOverrides>(
         mock_credentials_provider_, mock_kms_client_, mock_io_async_executor_,
         mock_cpu_async_executor_);
@@ -136,11 +144,12 @@ class TeeAwsKmsClientProviderTest : public ScpTestBase {
 
   void TearDown() override { EXPECT_SUCCESS(client_->Stop()); }
 
-  void ExpectCallGetRoleCredentials(
-      const string& expected_audience = "",
-      const vector<string>& expected_key_ids = {}) {
+  void ExpectCallGetRoleCredentials(const string& expected_audience = "",
+                                    const vector<string>& expected_key_ids = {},
+                                    int times = 1) {
     EXPECT_CALL(*mock_credentials_provider_, GetRoleCredentials)
-        .WillOnce([=](auto& context) {
+        .Times(times)
+        .WillRepeatedly([=](auto& context) {
           EXPECT_EQ(context.request->target_audience_for_web_identity,
                     expected_audience);
           if (expected_key_ids.empty()) {
@@ -194,6 +203,16 @@ TEST_F(TeeAwsKmsClientProviderTest, MissingCpuAsyncExecutor) {
   client_ = make_unique<MockNonteeAwsKmsClientProviderWithOverrides>(
       mock_credentials_provider_, mock_kms_client_, mock_io_async_executor_,
       nullptr);
+
+  EXPECT_THAT(client_->Init(),
+              ResultIs(FailureExecutionResult(
+                  SC_AWS_KMS_CLIENT_PROVIDER_MISSING_COMPONENT)));
+}
+
+TEST_F(TeeAwsKmsClientProviderTest, MissingKmsClientOptions) {
+  client_ = make_unique<MockNonteeAwsKmsClientProviderWithOverrides>(
+      mock_credentials_provider_, mock_kms_client_, mock_io_async_executor_,
+      mock_cpu_async_executor_, nullptr);
 
   EXPECT_THAT(client_->Init(),
               ResultIs(FailureExecutionResult(
@@ -414,5 +433,164 @@ TEST_F(TeeAwsKmsClientProviderTest, FailedDecryption) {
       });
   client_->Decrypt(context);
   WaitUntil([&]() { return condition.load(); });
+}
+
+TEST_F(TeeAwsKmsClientProviderTest, SuccessToDecryptWithCache) {
+  auto options = make_shared<KmsClientOptions>();
+  options->enable_aws_kms_client_cache = true;
+  client_ = make_unique<MockNonteeAwsKmsClientProviderWithOverrides>(
+      mock_credentials_provider_, mock_kms_client_, mock_io_async_executor_,
+      mock_cpu_async_executor_, options);
+
+  ExpectCallGetRoleCredentials("", {}, 3);
+  EXPECT_SUCCESS(client_->Init());
+  EXPECT_SUCCESS(client_->Run());
+
+  for (int i = 0; i < 3; ++i) {
+    auto kms_decrpyt_request = make_shared<DecryptRequest>();
+    kms_decrpyt_request->set_kms_region(kRegion);
+    kms_decrpyt_request->set_account_identity(kAssumeRoleArn);
+    kms_decrpyt_request->set_key_resource_name(kKeyArn);
+    kms_decrpyt_request->set_ciphertext(kCiphertext);
+    atomic<bool> condition = false;
+
+    AsyncContext<DecryptRequest, DecryptResponse> context(
+        kms_decrpyt_request,
+        [&](AsyncContext<DecryptRequest, DecryptResponse>& context) {
+          EXPECT_SUCCESS(context.result);
+          EXPECT_EQ(context.response->plaintext(), kPlaintext);
+          condition = true;
+        });
+
+    client_->Decrypt(context);
+    WaitUntil([&]() { return condition.load(); });
+  }
+
+  // GetKmsClient should only be called once since region is cached.
+  EXPECT_EQ(client_->get_kms_client_call_count_.load(), 1);
+}
+
+TEST_F(TeeAwsKmsClientProviderTest, SuccessToDecryptDifferentRegionsWithCache) {
+  auto options = make_shared<KmsClientOptions>();
+  options->enable_aws_kms_client_cache = true;
+  client_ = make_unique<MockNonteeAwsKmsClientProviderWithOverrides>(
+      mock_credentials_provider_, mock_kms_client_, mock_io_async_executor_,
+      mock_cpu_async_executor_, options);
+
+  ExpectCallGetRoleCredentials("", {}, 4);
+  EXPECT_SUCCESS(client_->Init());
+  EXPECT_SUCCESS(client_->Run());
+
+  std::vector<string> regions = {"us-east-1", "us-west-2", "us-east-1",
+                                 "us-west-2"};
+  for (const auto& region : regions) {
+    auto kms_decrpyt_request = make_shared<DecryptRequest>();
+    kms_decrpyt_request->set_kms_region(region);
+    kms_decrpyt_request->set_account_identity(kAssumeRoleArn);
+    kms_decrpyt_request->set_key_resource_name(kKeyArn);
+    kms_decrpyt_request->set_ciphertext(kCiphertext);
+    atomic<bool> condition = false;
+
+    AsyncContext<DecryptRequest, DecryptResponse> context(
+        kms_decrpyt_request,
+        [&](AsyncContext<DecryptRequest, DecryptResponse>& context) {
+          EXPECT_SUCCESS(context.result);
+          EXPECT_EQ(context.response->plaintext(), kPlaintext);
+          condition = true;
+        });
+
+    client_->Decrypt(context);
+    WaitUntil([&]() { return condition.load(); });
+  }
+
+  // GetKmsClient should be called twice (once for each distinct region).
+  EXPECT_EQ(client_->get_kms_client_call_count_.load(), 2);
+}
+
+TEST_F(TeeAwsKmsClientProviderTest, SuccessToDecryptWithoutCache) {
+  auto options = make_shared<KmsClientOptions>();
+  options->enable_aws_kms_client_cache = false;
+  client_ = make_unique<MockNonteeAwsKmsClientProviderWithOverrides>(
+      mock_credentials_provider_, mock_kms_client_, mock_io_async_executor_,
+      mock_cpu_async_executor_, options);
+
+  ExpectCallGetRoleCredentials("", {}, 3);
+  EXPECT_SUCCESS(client_->Init());
+  EXPECT_SUCCESS(client_->Run());
+
+  for (int i = 0; i < 3; ++i) {
+    auto kms_decrpyt_request = make_shared<DecryptRequest>();
+    kms_decrpyt_request->set_kms_region(kRegion);
+    kms_decrpyt_request->set_account_identity(kAssumeRoleArn);
+    kms_decrpyt_request->set_key_resource_name(kKeyArn);
+    kms_decrpyt_request->set_ciphertext(kCiphertext);
+    atomic<bool> condition = false;
+
+    AsyncContext<DecryptRequest, DecryptResponse> context(
+        kms_decrpyt_request,
+        [&](AsyncContext<DecryptRequest, DecryptResponse>& context) {
+          EXPECT_SUCCESS(context.result);
+          EXPECT_EQ(context.response->plaintext(), kPlaintext);
+          condition = true;
+        });
+
+    client_->Decrypt(context);
+    WaitUntil([&]() { return condition.load(); });
+  }
+
+  // GetKmsClient should be called on every request since cache is disabled.
+  EXPECT_EQ(client_->get_kms_client_call_count_.load(), 3);
+}
+
+TEST_F(TeeAwsKmsClientProviderTest,
+       SuccessToDecryptDifferentCredentialsWithCache) {
+  auto options = make_shared<KmsClientOptions>();
+  options->enable_aws_kms_client_cache = true;
+  client_ = make_unique<MockNonteeAwsKmsClientProviderWithOverrides>(
+      mock_credentials_provider_, mock_kms_client_, mock_io_async_executor_,
+      mock_cpu_async_executor_, options);
+
+  int call_index = 0;
+  EXPECT_CALL(*mock_credentials_provider_, GetRoleCredentials)
+      .Times(3)
+      .WillRepeatedly([&call_index](auto& context) {
+        context.response = make_shared<GetRoleCredentialsResponse>();
+        context.response->access_key_id = make_shared<string>(
+            "access_key_id_" + std::to_string(call_index % 2));
+        context.response->access_key_secret =
+            make_shared<string>("access_key_secret");
+        context.response->security_token =
+            make_shared<string>("security_token");
+        context.result = SuccessExecutionResult();
+        context.Finish();
+        call_index++;
+      });
+
+  EXPECT_SUCCESS(client_->Init());
+  EXPECT_SUCCESS(client_->Run());
+
+  for (int i = 0; i < 3; ++i) {
+    auto kms_decrpyt_request = make_shared<DecryptRequest>();
+    kms_decrpyt_request->set_kms_region(kRegion);
+    kms_decrpyt_request->set_account_identity(kAssumeRoleArn);
+    kms_decrpyt_request->set_key_resource_name(kKeyArn);
+    kms_decrpyt_request->set_ciphertext(kCiphertext);
+    atomic<bool> condition = false;
+
+    AsyncContext<DecryptRequest, DecryptResponse> context(
+        kms_decrpyt_request,
+        [&](AsyncContext<DecryptRequest, DecryptResponse>& context) {
+          EXPECT_SUCCESS(context.result);
+          EXPECT_EQ(context.response->plaintext(), kPlaintext);
+          condition = true;
+        });
+
+    client_->Decrypt(context);
+    WaitUntil([&]() { return condition.load(); });
+  }
+
+  // GetKmsClient should be called twice (once for access_key_id_0, once for
+  // access_key_id_1).
+  EXPECT_EQ(client_->get_kms_client_call_count_.load(), 2);
 }
 }  // namespace google::scp::cpio::client_providers::test

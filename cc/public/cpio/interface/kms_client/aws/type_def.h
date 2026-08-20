@@ -26,10 +26,6 @@ namespace google::scp::cpio {
 struct AwsKmsClientOptions : public KmsClientOptions {
   // Required. AWS region.
   std::string region;
-
-  // If present, fetch the role credentials with web identity in the http
-  // request.
-  std::string target_audience_for_web_identity;
 };
 }  // namespace google::scp::cpio
 

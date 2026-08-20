@@ -542,9 +542,8 @@ TEST_F(AutoRefreshKeyFetcherWithCacheTest,
       mock_metric_client_,
       KeyFetcherOptions{.max_prefetch_wait_time_millis = 1,
                         // no auto-refresh since the time interval is too long.
-                        .auto_refresh_time_duration =
-                            std::chrono::seconds(1), /* auto refresh time*/
-                        .enable_key_selection_timestamp_validation = true});
+                        .auto_refresh_time_duration = std::chrono::seconds(1),
+                        /* auto refresh time*/});
 
   EXPECT_SUCCESS(key_fetcher_with_cache->Init());
   EXPECT_SUCCESS(key_fetcher_with_cache->Run());

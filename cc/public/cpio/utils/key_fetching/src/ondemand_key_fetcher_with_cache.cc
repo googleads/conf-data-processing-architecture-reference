@@ -550,11 +550,6 @@ core::ExecutionResultOr<Key> OndemandKeyFetcherWithCache::GetKey(
                            allowed_keysets_name_,
                            KeyCacheStatus::kValidKeyCacheMiss);
 
-  // If the initial cache read fails, it is recorded as a cache miss.
-  if (!OnDemandFetchingLockEnabled()) {
-    return FetchValidateAndCacheKeyById(key_id);
-  }
-
   if (!FetchingInProgress(key_id)) {
     // This is to double confirm there is no thread finished key fetching
     // and key caching but the in progress status is not updated yet.
@@ -598,10 +593,6 @@ core::ExecutionResultOr<Key> OndemandKeyFetcherWithCache::GetKey(
             timeout_failure, "The key fetching failed for key %s.",
             key_id.c_str());
   return timeout_failure;
-}
-
-bool OndemandKeyFetcherWithCache::OnDemandFetchingLockEnabled() noexcept {
-  return key_fetcher_options_.enable_on_demand_fetching_lock_for_encryption_key;
 }
 
 void OndemandKeyFetcherWithCache::MarkFetchingFinished(

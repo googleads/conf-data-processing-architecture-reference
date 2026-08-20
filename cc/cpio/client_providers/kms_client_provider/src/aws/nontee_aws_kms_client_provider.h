@@ -26,12 +26,15 @@
 #include <aws/kms/model/DecryptRequest.h>
 #include <tink/aead.h>
 
+#include "core/common/auto_expiry_concurrent_map/src/auto_expiry_concurrent_map.h"
 #include "core/interface/async_context.h"
 #include "cpio/client_providers/interface/kms_client_provider_interface.h"
 #include "cpio/client_providers/interface/role_credentials_provider_interface.h"
 #include "public/core/interface/execution_result.h"
 
 namespace google::scp::cpio::client_providers {
+constexpr int kKmsServiceClientCacheLifetimeSeconds = 60 * 70;  // 70 minutes
+
 /*! @copydoc KmsClientProviderInterface
  */
 class NonteeAwsKmsClientProvider : public KmsClientProviderInterface {
@@ -51,9 +54,22 @@ class NonteeAwsKmsClientProvider : public KmsClientProviderInterface {
           role_credentials_provider,
       const std::shared_ptr<core::AsyncExecutorInterface>& io_async_executor,
       const std::shared_ptr<core::AsyncExecutorInterface>& cpu_async_executor)
-      : role_credentials_provider_(role_credentials_provider),
+      : kms_client_options_(options),
+        role_credentials_provider_(role_credentials_provider),
         io_async_executor_(io_async_executor),
-        cpu_async_executor_(cpu_async_executor) {}
+        cpu_async_executor_(cpu_async_executor),
+        aws_kms_service_client_cache_(
+            std::make_unique<core::common::AutoExpiryConcurrentMap<
+                std::string, std::shared_ptr<Aws::KMS::KMSClient>>>(
+                kms_client_options_
+                    ? kms_client_options_->aws_kms_client_cache_lifetime.count()
+                    : kKmsServiceClientCacheLifetimeSeconds,
+                true /* extend_entry_lifetime_on_access */,
+                true /* block_entry_while_eviction */,
+                [](auto&, auto&, auto should_delete_entry) {
+                  should_delete_entry(true);
+                },
+                cpu_async_executor)) {}
 
   NonteeAwsKmsClientProvider() = delete;
 
@@ -101,12 +117,25 @@ class NonteeAwsKmsClientProvider : public KmsClientProviderInterface {
       Aws::KMS::Model::DecryptRequest& decrypt_request) noexcept;
 
   /**
+   * @brief Gets or creates a KMS Client object.
+   *
+   * @param aws_credentials the AWS credentials.
+   * @param kms_region the AWS KMS region.
+   * @return std::shared_ptr<Aws::KMS::KMSClient> the KMS Client.
+   */
+  std::shared_ptr<Aws::KMS::KMSClient> GetOrCreateKmsClient(
+      const Aws::Auth::AWSCredentials& aws_credentials,
+      const std::string& kms_region) noexcept;
+
+  /**
    * @brief Gets a KMS Client object.
    * @return Aws::KMS::KMSClient the KMS Client.
    */
   virtual std::shared_ptr<Aws::KMS::KMSClient> GetKmsClient(
       const Aws::Auth::AWSCredentials& aws_credentials,
       const std::string& kms_region) noexcept;
+
+  std::shared_ptr<KmsClientOptions> kms_client_options_;
 
   /// Credentials provider.
   const std::shared_ptr<RoleCredentialsProviderInterface>
@@ -115,5 +144,10 @@ class NonteeAwsKmsClientProvider : public KmsClientProviderInterface {
   /// The instance of the io async executor.
   const std::shared_ptr<core::AsyncExecutorInterface> io_async_executor_,
       cpu_async_executor_;
+
+  /// KMSClient map keyed by AWS credentials and region.
+  std::unique_ptr<core::common::AutoExpiryConcurrentMap<
+      std::string, std::shared_ptr<Aws::KMS::KMSClient>>>
+      aws_kms_service_client_cache_;
 };
 }  // namespace google::scp::cpio::client_providers

@@ -24,6 +24,7 @@ cc_library(
     deps = [
         "//cc:cc_base_include_dir",
         "//cc/core/async_executor/src/aws:core_aws_async_executor_lib",
+        "//cc/core/common/auto_expiry_concurrent_map/src:auto_expiry_concurrent_map_lib",
         "//cc/core/common/uuid/src:uuid_lib",
         "//cc/core/interface:async_context_lib",
         "//cc/core/interface:interface_lib",
@@ -34,6 +35,7 @@ cc_library(
         "//cc/public/cpio/interface/kms_client:type_def",
         "//cc/public/cpio/interface/kms_client/aws:type_def",
         "@aws_sdk_cpp//:kms",
+        "@com_google_absl//absl/strings",
         "@tink_cc//tink:tink_cc",
     ],
 )

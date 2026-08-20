@@ -589,9 +589,7 @@ TEST_F(OndemandKeyFetcherWithCacheTest, OndemandFetchingOnceWithMultiThreads) {
 
   OndemandKeyFetcherWithCache key_fetcher_with_cache(
       async_executor_, mock_key_client_, mock_metric_client_,
-      CreateKeyServiceOptions(),
-      KeyFetcherOptions{.enable_on_demand_fetching_lock_for_encryption_key =
-                            true});
+      CreateKeyServiceOptions(), KeyFetcherOptions{});
   EXPECT_SUCCESS(key_fetcher_with_cache.Init());
   EXPECT_SUCCESS(key_fetcher_with_cache.Run());
 
@@ -639,9 +637,8 @@ TEST_F(OndemandKeyFetcherWithCacheTest, OndemandFetchingTimeout) {
   OndemandKeyFetcherWithCache key_fetcher_with_cache(
       async_executor_, mock_key_client_, mock_metric_client_,
       CreateKeyServiceOptions(),
-      KeyFetcherOptions{
-          .enable_on_demand_fetching_lock_for_encryption_key = true,
-          .on_demand_fetching_waiting_timeout = std::chrono::milliseconds(20)});
+      KeyFetcherOptions{.on_demand_fetching_waiting_timeout =
+                            std::chrono::milliseconds(20)});
   EXPECT_SUCCESS(key_fetcher_with_cache.Init());
   EXPECT_SUCCESS(key_fetcher_with_cache.Run());
 
@@ -699,9 +696,7 @@ TEST_F(OndemandKeyFetcherWithCacheTest,
 
   OndemandKeyFetcherWithCache key_fetcher_with_cache(
       async_executor_, mock_key_client_, mock_metric_client_,
-      CreateKeyServiceOptions(),
-      KeyFetcherOptions{.enable_on_demand_fetching_lock_for_encryption_key =
-                            true});
+      CreateKeyServiceOptions(), KeyFetcherOptions{});
   EXPECT_SUCCESS(key_fetcher_with_cache.Init());
   EXPECT_SUCCESS(key_fetcher_with_cache.Run());
 
