@@ -20,7 +20,7 @@ package(default_visibility = ["//cc:scp_cc_internal_pkg"])
 cc_test(
     name = "aws_role_credentials_provider_test",
     size = "small",
-    srcs = glob(["aws_role_credentials_provider_test.cc"]),
+    srcs = ["aws_role_credentials_provider_test.cc"],
     deps = [
         "//cc:cc_base_include_dir",
         "//cc/core/async_executor/mock:core_async_executor_mock",
@@ -33,6 +33,7 @@ cc_test(
         "//cc/public/core/test/interface:execution_result_matchers",
         "@aws_sdk_cpp//:sts",
         "@com_google_googletest//:gtest_main",
+        "@com_google_protobuf//:protobuf",
     ],
 )
 

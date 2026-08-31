@@ -51,10 +51,10 @@ cc_library(
 )
 
 cc_library(
-    name = "ondemand_key_fetcher_with_cache",
-    srcs = ["ondemand_key_fetcher_with_cache.cc"],
+    name = "coordinator_key_fetcher_with_cache_base",
+    srcs = ["coordinator_key_fetcher_with_cache_base.cc"],
     hdrs = [
-        "ondemand_key_fetcher_with_cache.h",
+        "coordinator_key_fetcher_with_cache_base.h",
     ],
     deps = [
         ":error_codes",
@@ -72,6 +72,17 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
+    ],
+)
+
+cc_library(
+    name = "ondemand_key_fetcher_with_cache",
+    srcs = ["ondemand_key_fetcher_with_cache.cc"],
+    hdrs = [
+        "ondemand_key_fetcher_with_cache.h",
+    ],
+    deps = [
+        ":coordinator_key_fetcher_with_cache_base",
     ],
 )
 

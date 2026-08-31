@@ -16,6 +16,8 @@
 
 #include "aws_role_credentials_provider.h"
 
+#include <algorithm>
+#include <chrono>
 #include <functional>
 #include <memory>
 #include <string>
@@ -25,11 +27,15 @@
 #include <aws/sts/model/AssumeRoleRequest.h>
 #include <aws/sts/model/AssumeRoleWithWebIdentityRequest.h>
 
+#include "absl/strings/str_cat.h"
+#include "absl/strings/str_join.h"
 #include "cc/core/common/uuid/src/uuid.h"
 #include "core/async_executor/src/aws/aws_async_executor.h"
 #include "core/common/time_provider/src/time_provider.h"
 #include "cpio/client_providers/role_credentials_provider/src/aws/sts_error_converter.h"
 #include "cpio/common/src/aws/aws_utils.h"
+#include "cpio/common/src/aws/error_codes.h"
+#include "google/protobuf/util/time_util.h"
 
 #include "error_codes.h"
 
@@ -41,6 +47,7 @@ using Aws::STS::Model::AssumeRoleOutcome;
 using Aws::STS::Model::AssumeRoleRequest;
 using Aws::STS::Model::AssumeRoleWithWebIdentityOutcome;
 using Aws::STS::Model::AssumeRoleWithWebIdentityRequest;
+using google::protobuf::util::TimeUtil;
 using google::scp::core::AsyncContext;
 using google::scp::core::AsyncExecutorInterface;
 using google::scp::core::AsyncPriority;
@@ -50,6 +57,7 @@ using google::scp::core::SuccessExecutionResult;
 using google::scp::core::async_executor::aws::AwsAsyncExecutor;
 using google::scp::core::common::kZeroUuid;
 using google::scp::core::common::TimeProvider;
+using google::scp::core::errors::SC_AWS_INVALID_CREDENTIALS;
 using google::scp::core::errors::
     SC_AWS_ROLE_CREDENTIALS_PROVIDER_INITIALIZATION_FAILED;
 using google::scp::core::errors::
@@ -59,6 +67,7 @@ using std::shared_ptr;
 using std::string;
 using std::to_string;
 using std::vector;
+using std::chrono::seconds;
 using std::placeholders::_1;
 using std::placeholders::_2;
 using std::placeholders::_3;
@@ -68,6 +77,32 @@ namespace {
 constexpr char kAwsRoleCredentialsProvider[] = "AwsRoleCredentialsProvider";
 constexpr char kGcpTokenTypeForAws[] = "LIMITED_AWS";
 constexpr char kGcpTokenTypeForAwsForKeyIds[] = "AWS_PRINCIPALTAGS";
+// Refetch credentials kCredentialsEarlyExpirationIntervalInSeconds before they
+// expire.
+constexpr int16_t kCredentialsEarlyExpirationIntervalInSeconds = 300;
+
+string CreateRoleCredentialsCacheKey(
+    const string& account_identity, const string& target_audience,
+    const shared_ptr<vector<string>>& key_ids = nullptr) {
+  if (target_audience.empty()) {
+    return account_identity;
+  }
+  if (!key_ids || key_ids->empty()) {
+    return absl::StrCat(account_identity, ":", target_audience);
+  }
+  vector<string> sorted_key_ids = *key_ids;
+  std::sort(sorted_key_ids.begin(), sorted_key_ids.end());
+  return absl::StrCat(account_identity, ":", target_audience, ":",
+                      absl::StrJoin(sorted_key_ids, ","));
+}
+
+bool RoleCredentialsAreExpired(
+    const google::scp::cpio::client_providers::GetRoleCredentialsResponse&
+        credentials_response) {
+  return credentials_response.expire_time.count() <
+         TimeUtil::GetCurrentTime().seconds() +
+             kCredentialsEarlyExpirationIntervalInSeconds;
+}
 }  // namespace
 
 namespace google::scp::cpio::client_providers {
@@ -137,6 +172,32 @@ void AwsRoleCredentialsProvider::GetRoleCredentials(
     return;
   }
 
+  if (options_->enable_role_credentials_cache) {
+    GetRoleCredentialsResponse cached_response;
+    auto cache_key = CreateRoleCredentialsCacheKey(
+        *get_credentials_context.request->account_identity,
+        get_credentials_context.request->target_audience_for_web_identity,
+        get_credentials_context.request->key_ids);
+    auto result = cached_role_credentials_.Find(cache_key, cached_response);
+    if (result.Successful() && !RoleCredentialsAreExpired(cached_response)) {
+      SCP_DEBUG_CONTEXT(
+          kAwsRoleCredentialsProvider, get_credentials_context,
+          "Found role credentials cache with expiration time %lld.",
+          cached_response.expire_time.count());
+      get_credentials_context.response =
+          make_shared<GetRoleCredentialsResponse>(cached_response);
+      get_credentials_context.result = SuccessExecutionResult();
+      get_credentials_context.Finish();
+      return;
+    }
+  }
+
+  GetRoleCredentialsInternal(get_credentials_context);
+}
+
+void AwsRoleCredentialsProvider::GetRoleCredentialsInternal(
+    AsyncContext<GetRoleCredentialsRequest, GetRoleCredentialsResponse>&
+        get_credentials_context) noexcept {
   if (!get_credentials_context.request->target_audience_for_web_identity
            .empty()) {
     auto get_token_request = make_shared<GetTeeSessionTokenRequest>();
@@ -243,6 +304,46 @@ void AwsRoleCredentialsProvider::OnGetRoleCredentialsCallback(
                               .GetSessionToken()
                               .c_str());
 
+  if (options_->enable_role_credentials_cache) {
+    const auto& credentials =
+        get_credentials_outcome.GetResult().GetCredentials();
+    int64_t expiration_seconds = credentials.GetExpiration().Millis() / 1000;
+    if (expiration_seconds == 0) {
+      auto execution_result =
+          FailureExecutionResult(SC_AWS_INVALID_CREDENTIALS);
+      SCP_ERROR_CONTEXT(
+          kAwsRoleCredentialsProvider, get_credentials_context,
+          execution_result,
+          "Role credentials expiration time is missing or invalid.");
+      get_credentials_context.result = execution_result;
+      get_credentials_context.Finish();
+      return;
+    }
+    get_credentials_context.response->expire_time = seconds(expiration_seconds);
+
+    auto cache_key = CreateRoleCredentialsCacheKey(
+        *get_credentials_context.request->account_identity,
+        get_credentials_context.request->target_audience_for_web_identity,
+        get_credentials_context.request->key_ids);
+    auto cached_pair =
+        std::make_pair(cache_key, *get_credentials_context.response);
+    auto erase_result = cached_role_credentials_.Erase(cache_key);
+    if (!erase_result.Successful()) {
+      SCP_DEBUG_CONTEXT(
+          kAwsRoleCredentialsProvider, get_credentials_context,
+          "Failed to erase cached role credentials. Cache key is: %s",
+          cache_key.c_str());
+    }
+    auto insert_result = cached_role_credentials_.Insert(
+        cached_pair, *get_credentials_context.response);
+    if (!insert_result.Successful()) {
+      SCP_DEBUG_CONTEXT(
+          kAwsRoleCredentialsProvider, get_credentials_context,
+          "Failed to insert cached role credentials. Cache key is: %s",
+          cache_key.c_str());
+    }
+  }
+
   get_credentials_context.Finish();
 }
 
@@ -290,6 +391,46 @@ void AwsRoleCredentialsProvider::OnGetRoleCredentialsWithWebIdentityCallback(
                               .GetCredentials()
                               .GetSessionToken()
                               .c_str());
+
+  if (options_->enable_role_credentials_cache) {
+    const auto& credentials =
+        get_credentials_outcome.GetResult().GetCredentials();
+    int64_t expiration_seconds = credentials.GetExpiration().Millis() / 1000;
+    if (expiration_seconds == 0) {
+      auto execution_result =
+          FailureExecutionResult(SC_AWS_INVALID_CREDENTIALS);
+      SCP_ERROR_CONTEXT(
+          kAwsRoleCredentialsProvider, get_credentials_context,
+          execution_result,
+          "Role credentials expiration time is missing or invalid.");
+      get_credentials_context.result = execution_result;
+      get_credentials_context.Finish();
+      return;
+    }
+    get_credentials_context.response->expire_time = seconds(expiration_seconds);
+
+    auto cache_key = CreateRoleCredentialsCacheKey(
+        *get_credentials_context.request->account_identity,
+        get_credentials_context.request->target_audience_for_web_identity,
+        get_credentials_context.request->key_ids);
+    auto cached_pair =
+        std::make_pair(cache_key, *get_credentials_context.response);
+    auto erase_result = cached_role_credentials_.Erase(cache_key);
+    if (!erase_result.Successful()) {
+      SCP_DEBUG_CONTEXT(
+          kAwsRoleCredentialsProvider, get_credentials_context,
+          "Failed to erase cached role credentials. Cache key is: %s",
+          cache_key.c_str());
+    }
+    auto insert_result = cached_role_credentials_.Insert(
+        cached_pair, *get_credentials_context.response);
+    if (!insert_result.Successful()) {
+      SCP_DEBUG_CONTEXT(
+          kAwsRoleCredentialsProvider, get_credentials_context,
+          "Failed to insert cached role credentials. Cache key is: %s",
+          cache_key.c_str());
+    }
+  }
 
   get_credentials_context.Finish();
 }

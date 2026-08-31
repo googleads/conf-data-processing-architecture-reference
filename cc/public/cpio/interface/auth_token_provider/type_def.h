@@ -1,5 +1,5 @@
 /*
- * Copyright 2022 Google LLC
+ * Copyright 2026 Google LLC
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,22 +14,18 @@
  * limitations under the License.
  */
 
-#ifndef SCP_CPIO_INTERFACE_AWS_KMS_CLIENT_TYPE_DEF_H_
-#define SCP_CPIO_INTERFACE_AWS_KMS_CLIENT_TYPE_DEF_H_
-
-#include <string>
-
-#include "public/cpio/interface/kms_client/type_def.h"
+#ifndef SCP_CPIO_INTERFACE_AUTH_TOKEN_PROVIDER_TYPE_DEF_H_
+#define SCP_CPIO_INTERFACE_AUTH_TOKEN_PROVIDER_TYPE_DEF_H_
 
 namespace google::scp::cpio {
-/// KmsClientOptions for AWS.
-struct AwsKmsClientOptions : public KmsClientOptions {
-  // Required. AWS region.
-  std::string region;
+/// Options for AuthTokenProvider.
+struct AuthTokenProviderOptions {
+  virtual ~AuthTokenProviderOptions() = default;
 
-  // If true, enable caching for AWS role credentials.
-  bool enable_aws_role_credentials_cache = false;
+  /// If true, enable caching for TEE session tokens for audience and signature
+  /// keys.
+  bool enable_token_cache_for_audience_and_signature_keys = false;
 };
 }  // namespace google::scp::cpio
 
-#endif  // SCP_CPIO_INTERFACE_AWS_KMS_CLIENT_TYPE_DEF_H_
+#endif  // SCP_CPIO_INTERFACE_AUTH_TOKEN_PROVIDER_TYPE_DEF_H_

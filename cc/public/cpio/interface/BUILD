@@ -66,6 +66,7 @@ cc_library(
     deps = [
         "//cc:cc_base_include_dir",
         "//cc/core/interface:interface_lib",
+        "//cc/public/cpio/interface/auth_token_provider:type_def",
         "//cc/public/cpio/interface/metric_client:type_def",
     ],
 )

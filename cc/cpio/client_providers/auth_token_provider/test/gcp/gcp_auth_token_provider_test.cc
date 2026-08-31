@@ -111,8 +111,10 @@ class GcpAuthTokenProviderTest : public ScpTestBase,
     io_async_executor_ = make_shared<AsyncExecutor>(2, 1000);
     EXPECT_SUCCESS(io_async_executor_->Init());
     EXPECT_SUCCESS(io_async_executor_->Run());
-    authorizer_provider_ =
-        make_unique<GcpAuthTokenProvider>(http_client_, io_async_executor_);
+    auto options = make_shared<AuthTokenProviderOptions>();
+    options->enable_token_cache_for_audience_and_signature_keys = true;
+    authorizer_provider_ = make_unique<GcpAuthTokenProvider>(
+        std::move(options), http_client_, io_async_executor_);
     EXPECT_SUCCESS(authorizer_provider_->Init());
     EXPECT_SUCCESS(authorizer_provider_->Run());
     fetch_token_for_target_audience_context_.request =
@@ -306,8 +308,8 @@ TEST_F(GcpAuthTokenProviderTest, GetSessionTokenFailsIfHttpRequestFails) {
 }
 
 TEST_F(GcpAuthTokenProviderTest, NullHttpClientProvider) {
-  auto auth_token_provider =
-      make_shared<GcpAuthTokenProvider>(nullptr, io_async_executor_);
+  auto auth_token_provider = make_shared<GcpAuthTokenProvider>(
+      make_shared<AuthTokenProviderOptions>(), nullptr, io_async_executor_);
 
   EXPECT_THAT(auth_token_provider->Init(),
               ResultIs(FailureExecutionResult(
@@ -490,7 +492,7 @@ TEST_P(GcpAuthTokenProviderTest, FetchTokenForTargetAudienceFailsIfBadJson) {
 }
 
 TEST_F(GcpAuthTokenProviderTest, GetTeeSessionTokenSuccessfully) {
-  string tee_token = "abcd";
+  string tee_token = CreateHttpResponseForTargetAudience(kExpireTime.count());
   EXPECT_CALL(*http_client_, PerformRequest)
       .WillOnce([&tee_token](auto& http_context) {
         EXPECT_EQ(http_context.request->method, HttpMethod::POST);
@@ -518,6 +520,7 @@ TEST_F(GcpAuthTokenProviderTest, GetTeeSessionTokenSuccessfully) {
   fetch_tee_token_context_.callback = [this, &tee_token](auto& context) {
     EXPECT_SUCCESS(context.result);
     EXPECT_EQ(*context.response->session_token, tee_token);
+    EXPECT_EQ(context.response->expire_time.count(), kExpireTime.count());
     finished_ = true;
   };
 
@@ -526,7 +529,7 @@ TEST_F(GcpAuthTokenProviderTest, GetTeeSessionTokenSuccessfully) {
 }
 
 TEST_F(GcpAuthTokenProviderTest, GetTeeSessionTokenWithKeyIdsSuccessfully) {
-  string tee_token = "abcd";
+  string tee_token = CreateHttpResponseForTargetAudience(kExpireTime.count());
   EXPECT_CALL(*http_client_, PerformRequest)
       .WillOnce([&tee_token](auto& http_context) {
         EXPECT_EQ(http_context.request->method, HttpMethod::POST);
@@ -559,6 +562,224 @@ TEST_F(GcpAuthTokenProviderTest, GetTeeSessionTokenWithKeyIdsSuccessfully) {
   fetch_tee_token_context_.callback = [this, &tee_token](auto& context) {
     EXPECT_SUCCESS(context.result);
     EXPECT_EQ(*context.response->session_token, tee_token);
+    EXPECT_EQ(context.response->expire_time.count(), kExpireTime.count());
+    finished_ = true;
+  };
+
+  authorizer_provider_->GetTeeSessionToken(fetch_tee_token_context_);
+  WaitUntil([this]() { return finished_.load(); });
+}
+
+TEST_F(GcpAuthTokenProviderTest,
+       GetCachedTeeSessionTokenWithKeyIdsSuccessfully) {
+  string tee_token = CreateHttpResponseForTargetAudience(kExpireTime.count());
+  EXPECT_CALL(*http_client_, PerformRequest)
+      .WillOnce([&tee_token](auto& http_context) {
+        http_context.result = SuccessExecutionResult();
+        http_context.response = make_shared<HttpResponse>();
+        http_context.response->body = BytesBuffer(tee_token);
+        http_context.Finish();
+        return SuccessExecutionResult();
+      });
+
+  fetch_tee_token_context_.request = make_shared<GetTeeSessionTokenRequest>();
+  fetch_tee_token_context_.request->token_target_audience_uri =
+      make_shared<string>(kAudience);
+  fetch_tee_token_context_.request->token_type =
+      make_shared<string>(kTokenType);
+  fetch_tee_token_context_.request->key_ids =
+      make_shared<vector<string>>(kKeyIds);
+
+  fetch_tee_token_context_.callback = [this, &tee_token](auto& context) {
+    EXPECT_SUCCESS(context.result);
+    EXPECT_EQ(*context.response->session_token, tee_token);
+    finished_ = true;
+  };
+
+  authorizer_provider_->GetTeeSessionToken(fetch_tee_token_context_);
+  WaitUntil([this]() { return finished_.load(); });
+
+  // Call again: token is cached and not expired, so PerformRequest should NOT
+  // be called.
+  finished_ = false;
+  fetch_tee_token_context_.callback = [this, &tee_token](auto& context) {
+    EXPECT_SUCCESS(context.result);
+    EXPECT_EQ(*context.response->session_token, tee_token);
+    finished_ = true;
+  };
+
+  authorizer_provider_->GetTeeSessionToken(fetch_tee_token_context_);
+  WaitUntil([this]() { return finished_.load(); });
+}
+
+TEST_F(GcpAuthTokenProviderTest, GetTeeSessionTokenWhenCacheDisabledNotCached) {
+  auto options = make_shared<AuthTokenProviderOptions>();
+  options->enable_token_cache_for_audience_and_signature_keys = false;
+  auto disabled_cache_provider = make_unique<GcpAuthTokenProvider>(
+      std::move(options), http_client_, io_async_executor_);
+  EXPECT_SUCCESS(disabled_cache_provider->Init());
+  EXPECT_SUCCESS(disabled_cache_provider->Run());
+
+  string tee_token = CreateHttpResponseForTargetAudience(kExpireTime.count());
+  // Expect 2 HTTP calls because cache is disabled.
+  EXPECT_CALL(*http_client_, PerformRequest)
+      .Times(2)
+      .WillRepeatedly([&tee_token](auto& http_context) {
+        http_context.result = SuccessExecutionResult();
+        http_context.response = make_shared<HttpResponse>();
+        http_context.response->body = BytesBuffer(tee_token);
+        http_context.Finish();
+        return SuccessExecutionResult();
+      });
+
+  fetch_tee_token_context_.request = make_shared<GetTeeSessionTokenRequest>();
+  fetch_tee_token_context_.request->token_target_audience_uri =
+      make_shared<string>(kAudience);
+  fetch_tee_token_context_.request->token_type =
+      make_shared<string>(kTokenType);
+  fetch_tee_token_context_.request->key_ids =
+      make_shared<vector<string>>(kKeyIds);
+
+  fetch_tee_token_context_.callback = [this, &tee_token](auto& context) {
+    EXPECT_SUCCESS(context.result);
+    EXPECT_EQ(*context.response->session_token, tee_token);
+    finished_ = true;
+  };
+
+  disabled_cache_provider->GetTeeSessionToken(fetch_tee_token_context_);
+  WaitUntil([this]() { return finished_.load(); });
+
+  // Call again: cache is disabled, so PerformRequest should be called again.
+  finished_ = false;
+  fetch_tee_token_context_.callback = [this, &tee_token](auto& context) {
+    EXPECT_SUCCESS(context.result);
+    EXPECT_EQ(*context.response->session_token, tee_token);
+    finished_ = true;
+  };
+
+  disabled_cache_provider->GetTeeSessionToken(fetch_tee_token_context_);
+  WaitUntil([this]() { return finished_.load(); });
+
+  EXPECT_SUCCESS(disabled_cache_provider->Stop());
+}
+
+TEST_F(GcpAuthTokenProviderTest,
+       GetTeeSessionTokenDifferentKeyIdsNotCachedTogether) {
+  string tee_token1 = CreateHttpResponseForTargetAudience(kExpireTime.count());
+  string tee_token2 =
+      CreateHttpResponseForTargetAudience(kExpireTime.count() + 100);
+
+  // Expect 2 HTTP calls because the two requests have different key_ids.
+  EXPECT_CALL(*http_client_, PerformRequest)
+      .WillOnce([&tee_token1](auto& http_context) {
+        http_context.result = SuccessExecutionResult();
+        http_context.response = make_shared<HttpResponse>();
+        http_context.response->body = BytesBuffer(tee_token1);
+        http_context.Finish();
+        return SuccessExecutionResult();
+      })
+      .WillOnce([&tee_token2](auto& http_context) {
+        http_context.result = SuccessExecutionResult();
+        http_context.response = make_shared<HttpResponse>();
+        http_context.response->body = BytesBuffer(tee_token2);
+        http_context.Finish();
+        return SuccessExecutionResult();
+      });
+
+  fetch_tee_token_context_.request = make_shared<GetTeeSessionTokenRequest>();
+  fetch_tee_token_context_.request->token_target_audience_uri =
+      make_shared<string>(kAudience);
+  fetch_tee_token_context_.request->token_type =
+      make_shared<string>(kTokenType);
+  fetch_tee_token_context_.request->key_ids =
+      make_shared<vector<string>>(vector<string>{"key_a"});
+
+  fetch_tee_token_context_.callback = [this, &tee_token1](auto& context) {
+    EXPECT_SUCCESS(context.result);
+    EXPECT_EQ(*context.response->session_token, tee_token1);
+    finished_ = true;
+  };
+
+  authorizer_provider_->GetTeeSessionToken(fetch_tee_token_context_);
+  WaitUntil([this]() { return finished_.load(); });
+
+  // Call with different key_ids: should fetch from server, not use previous
+  // cache
+  finished_ = false;
+  fetch_tee_token_context_.request = make_shared<GetTeeSessionTokenRequest>();
+  fetch_tee_token_context_.request->token_target_audience_uri =
+      make_shared<string>(kAudience);
+  fetch_tee_token_context_.request->token_type =
+      make_shared<string>(kTokenType);
+  fetch_tee_token_context_.request->key_ids =
+      make_shared<vector<string>>(vector<string>{"key_b"});
+
+  fetch_tee_token_context_.callback = [this, &tee_token2](auto& context) {
+    EXPECT_SUCCESS(context.result);
+    EXPECT_EQ(*context.response->session_token, tee_token2);
+    finished_ = true;
+  };
+
+  authorizer_provider_->GetTeeSessionToken(fetch_tee_token_context_);
+  WaitUntil([this]() { return finished_.load(); });
+}
+
+TEST_F(GcpAuthTokenProviderTest,
+       GetTeeSessionTokenWhenJwtMissingExpirationKey) {
+  string tee_token = absl::StrFormat(
+      "header.%s.sig",
+      *Base64Encode(
+          "{\"iss\":\"issuer\",\"aud\":\"audience\",\"sub\":\"subject\"}"));
+  EXPECT_CALL(*http_client_, PerformRequest)
+      .Times(kRetryTime)
+      .WillRepeatedly([&tee_token](auto& http_context) {
+        http_context.result = SuccessExecutionResult();
+        http_context.response = make_shared<HttpResponse>();
+        http_context.response->body = BytesBuffer(tee_token);
+        http_context.Finish();
+        return SuccessExecutionResult();
+      });
+
+  fetch_tee_token_context_.request = make_shared<GetTeeSessionTokenRequest>();
+  fetch_tee_token_context_.request->token_target_audience_uri =
+      make_shared<string>(kAudience);
+  fetch_tee_token_context_.request->token_type =
+      make_shared<string>(kTokenType);
+
+  fetch_tee_token_context_.callback = [this](auto& context) {
+    EXPECT_THAT(context.result,
+                ResultIs(FailureExecutionResult(
+                    core::errors::SC_DISPATCHER_EXHAUSTED_RETRIES)));
+    finished_ = true;
+  };
+
+  authorizer_provider_->GetTeeSessionToken(fetch_tee_token_context_);
+  WaitUntil([this]() { return finished_.load(); });
+}
+
+TEST_F(GcpAuthTokenProviderTest, GetTeeSessionTokenWhenJwtPayloadNotJson) {
+  string tee_token =
+      absl::StrFormat("header.%s.sig", *Base64Encode("not-valid-json"));
+  EXPECT_CALL(*http_client_, PerformRequest)
+      .Times(kRetryTime)
+      .WillRepeatedly([&tee_token](auto& http_context) {
+        http_context.result = SuccessExecutionResult();
+        http_context.response = make_shared<HttpResponse>();
+        http_context.response->body = BytesBuffer(tee_token);
+        http_context.Finish();
+        return SuccessExecutionResult();
+      });
+
+  fetch_tee_token_context_.request = make_shared<GetTeeSessionTokenRequest>();
+  fetch_tee_token_context_.request->token_target_audience_uri =
+      make_shared<string>(kAudience);
+  fetch_tee_token_context_.request->token_type =
+      make_shared<string>(kTokenType);
+
+  fetch_tee_token_context_.callback = [this](auto& context) {
+    EXPECT_THAT(context.result,
+                ResultIs(FailureExecutionResult(
+                    core::errors::SC_DISPATCHER_EXHAUSTED_RETRIES)));
     finished_ = true;
   };
 

@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include <chrono>
 #include <memory>
 #include <string>
 #include <vector>
@@ -35,6 +36,9 @@ struct RoleCredentialsProviderOptions {
   /// InstanceClient. If the code is not running on the corresponding cloud
   /// instance, InstanceClient will not work.
   std::string region;
+
+  /// If true, enable caching for role credentials.
+  bool enable_role_credentials_cache = false;
 };
 
 /// Represents the get credentials request object.
@@ -53,6 +57,9 @@ struct GetRoleCredentialsResponse {
   std::shared_ptr<std::string> access_key_id;
   std::shared_ptr<std::string> access_key_secret;
   std::shared_ptr<std::string> security_token;
+
+  // Timestamp the credentials will expire.
+  std::chrono::seconds expire_time = std::chrono::seconds(0);
 };
 
 /// Provides cloud role credentials functionality.

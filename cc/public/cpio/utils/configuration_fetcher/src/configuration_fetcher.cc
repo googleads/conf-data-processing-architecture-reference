@@ -128,7 +128,8 @@ void ConfigurationFetcher::CreateInstanceAndParameterClient() noexcept {
   http2_client_ = make_shared<core::HttpClient>(cpu_async_executor_);
 
   auth_token_provider_ = make_shared<client_providers::GcpAuthTokenProvider>(
-      http1_client_, io_async_executor_);
+      make_shared<AuthTokenProviderOptions>(), http1_client_,
+      io_async_executor_);
 
   instance_client_provider_ =
       make_shared<client_providers::GcpInstanceClientProvider>(

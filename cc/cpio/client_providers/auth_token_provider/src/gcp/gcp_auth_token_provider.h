@@ -38,6 +38,7 @@ bool TokenIsExpired(
 class GcpAuthTokenProvider : public AuthTokenProviderInterface {
  public:
   GcpAuthTokenProvider(
+      const std::shared_ptr<AuthTokenProviderOptions>& options,
       const std::shared_ptr<core::HttpClientInterface>& http_client,
       const std::shared_ptr<core::AsyncExecutorInterface>& io_async_executor);
 
@@ -68,6 +69,10 @@ class GcpAuthTokenProvider : public AuthTokenProviderInterface {
   void GetSessionTokenForTargetAudienceInternal(
       core::AsyncContext<GetSessionTokenForTargetAudienceRequest,
                          GetSessionTokenResponse>& get_token_context) noexcept;
+
+  void GetTeeSessionTokenInternal(
+      core::AsyncContext<GetTeeSessionTokenRequest, GetSessionTokenResponse>&
+          get_token_context) noexcept;
 
   /**
    * @brief Is called when the get session token from current instance operation
@@ -111,11 +116,14 @@ class GcpAuthTokenProvider : public AuthTokenProviderInterface {
   /// Mutex to protect the cached token.
   std::shared_mutex mutex_;
 
-  /// Cached token for target audience.
+  /// Cached token for target audience and key IDs.
   core::common::ConcurrentMap<std::string, GetSessionTokenResponse>
       cached_token_for_target_audience_;
 
   /// Operation distpatcher for retry.
   core::common::OperationDispatcher operation_dispatcher_;
+
+  /// Options for AuthTokenProvider.
+  std::shared_ptr<AuthTokenProviderOptions> options_;
 };
 }  // namespace google::scp::cpio::client_providers

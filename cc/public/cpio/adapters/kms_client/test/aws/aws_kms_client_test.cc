@@ -60,7 +60,7 @@ class MockAwsRoleCredentialsProviderFactory
   MOCK_METHOD(shared_ptr<RoleCredentialsProviderInterface>, Create,
               (const string&, const shared_ptr<AsyncExecutorInterface>&,
                const shared_ptr<AsyncExecutorInterface>&,
-               const shared_ptr<AuthTokenProviderInterface>&),
+               const shared_ptr<AuthTokenProviderInterface>&, bool),
               (noexcept, override));
 };
 
@@ -88,7 +88,6 @@ class AwsKmsClientTest : public ScpTestBase {
     mock_role_credentials_provider_ =
         make_shared<MockRoleCredentialsProvider>();
     mock_kms_client_provider_ = make_shared<MockKmsClientProvider>();
-    mock_auth_token_provider_ = make_shared<MockAuthTokenProvider>();
   }
 
   ~AwsKmsClientTest() {
@@ -103,7 +102,6 @@ class AwsKmsClientTest : public ScpTestBase {
   shared_ptr<MockAwsKmsClientProviderFactory> mock_kms_client_provider_factory_;
   shared_ptr<MockRoleCredentialsProvider> mock_role_credentials_provider_;
   shared_ptr<MockKmsClientProvider> mock_kms_client_provider_;
-  shared_ptr<MockAuthTokenProvider> mock_auth_token_provider_;
 };
 
 MATCHER_P(RegionMatch, region, "") {
@@ -127,7 +125,7 @@ TEST_F(AwsKmsClientTest, CreateSuccessfullyWithRegion) {
                                       mock_kms_client_provider_factory_);
 
   EXPECT_CALL(*mock_role_credentials_provider_factory_,
-              Create(RegionMatch(options->region), _, _, _))
+              Create(RegionMatch(options->region), _, _, _, false))
       .WillOnce(Return(mock_role_credentials_provider_));
   EXPECT_CALL(*mock_kms_client_provider_factory_, Create)
       .WillOnce(Return(mock_kms_client_provider_));
@@ -140,9 +138,41 @@ TEST_F(AwsKmsClientTest, CreateSuccessfullyWithRegion) {
       .WillOnce(Return(SuccessExecutionResult()));
   EXPECT_CALL(*mock_kms_client_provider_, Run)
       .WillOnce(Return(SuccessExecutionResult()));
+  EXPECT_CALL(*mock_kms_client_provider_, Stop)
+      .WillOnce(Return(SuccessExecutionResult()));
   EXPECT_CALL(*mock_role_credentials_provider_, Stop)
       .WillOnce(Return(SuccessExecutionResult()));
+
+  EXPECT_SUCCESS(client_->Init());
+  EXPECT_SUCCESS(client_->Run());
+  EXPECT_SUCCESS(client_->Stop());
+}
+
+TEST_F(AwsKmsClientTest, CreateSuccessfullyWithAwsRoleCredentialsCacheEnabled) {
+  auto options = make_shared<AwsKmsClientOptions>();
+  options->region = "us-east-1";
+  options->enable_aws_role_credentials_cache = true;
+  client_ = make_unique<AwsKmsClient>(std::move(options),
+                                      mock_role_credentials_provider_factory_,
+                                      mock_kms_client_provider_factory_);
+
+  EXPECT_CALL(*mock_role_credentials_provider_factory_,
+              Create(RegionMatch(options->region), _, _, _, true))
+      .WillOnce(Return(mock_role_credentials_provider_));
+  EXPECT_CALL(*mock_kms_client_provider_factory_, Create)
+      .WillOnce(Return(mock_kms_client_provider_));
+
+  EXPECT_CALL(*mock_role_credentials_provider_, Init)
+      .WillOnce(Return(SuccessExecutionResult()));
+  EXPECT_CALL(*mock_kms_client_provider_, Init)
+      .WillOnce(Return(SuccessExecutionResult()));
+  EXPECT_CALL(*mock_role_credentials_provider_, Run)
+      .WillOnce(Return(SuccessExecutionResult()));
+  EXPECT_CALL(*mock_kms_client_provider_, Run)
+      .WillOnce(Return(SuccessExecutionResult()));
   EXPECT_CALL(*mock_kms_client_provider_, Stop)
+      .WillOnce(Return(SuccessExecutionResult()));
+  EXPECT_CALL(*mock_role_credentials_provider_, Stop)
       .WillOnce(Return(SuccessExecutionResult()));
 
   EXPECT_SUCCESS(client_->Init());

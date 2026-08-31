@@ -60,10 +60,16 @@ AwsRoleCredentialsProviderFactory::Create(
     const shared_ptr<AsyncExecutorInterface>& io_async_executor,
     const shared_ptr<AsyncExecutorInterface>& cpu_async_executor,
     const shared_ptr<client_providers::AuthTokenProviderInterface>&
-        auth_token_provider) {
+        auth_token_provider,
+    bool enable_role_credentials_cache) {
   auto role_credentials_provider_options =
       make_shared<RoleCredentialsProviderOptions>();
+  // TODO: IAM role is a global resource, so the STS region does not need to
+  // match the KMS key region. Consider allowing STS region to be configured
+  // independently or selecting the optimal region.
   role_credentials_provider_options->region = region;
+  role_credentials_provider_options->enable_role_credentials_cache =
+      enable_role_credentials_cache;
   return make_shared<AwsRoleCredentialsProvider>(
       std::move(role_credentials_provider_options), cpu_async_executor,
       io_async_executor, auth_token_provider);
@@ -113,7 +119,8 @@ ExecutionResult AwsKmsClient::Init() noexcept {
       kAwsKmsClient, kZeroUuid, "Failed to get AuthTokenProvider.");
   role_credentials_provider_ = role_credentials_provider_factory_->Create(
       aws_kms_client_options->region, cpu_async_executor, io_async_executor,
-      auth_token_provider);
+      auth_token_provider,
+      aws_kms_client_options->enable_aws_role_credentials_cache);
 
   kms_client_provider_ = kms_client_provider_factory_->Create(
       aws_kms_client_options, role_credentials_provider_, cpu_async_executor,

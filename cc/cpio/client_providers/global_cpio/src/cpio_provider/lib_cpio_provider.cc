@@ -463,8 +463,10 @@ ExecutionResult LibCpioProvider::GetAuthTokenProvider(
     return execution_result;
   }
 
-  auth_token_provider_ =
-      AuthTokenProviderFactory::Create(http1_client, io_async_executor);
+  auto auth_token_provider_options = make_shared<AuthTokenProviderOptions>(
+      cpio_options_->auth_token_provider_options);
+  auth_token_provider_ = AuthTokenProviderFactory::Create(
+      auth_token_provider_options, http1_client, io_async_executor);
   execution_result = auth_token_provider_->Init();
   if (!execution_result.Successful()) {
     SCP_ERROR(kLibCpioProvider, kZeroUuid, execution_result,

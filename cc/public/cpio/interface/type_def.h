@@ -28,6 +28,7 @@
 #include "core/interface/logger_interface.h"
 #include "core/interface/type_def.h"
 #include "public/core/interface/execution_result.h"
+#include "public/cpio/interface/auth_token_provider/type_def.h"
 #include "public/cpio/interface/metric_client/type_def.h"
 
 namespace google::scp::cpio {
@@ -84,6 +85,9 @@ struct CpioOptions {
 
   /// Options for Metric Client.
   MetricClientOptions metric_client_options;
+
+  /// Options for Auth Token Provider.
+  AuthTokenProviderOptions auth_token_provider_options;
 
   /// Http2 client read timeout in seconds.
   std::chrono::seconds http2_read_timeout_in_sec =

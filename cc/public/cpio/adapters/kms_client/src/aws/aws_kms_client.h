@@ -20,6 +20,7 @@
 #include <string>
 #include <vector>
 
+#include "cpio/client_providers/interface/auth_token_provider_interface.h"
 #include "cpio/client_providers/interface/kms_client_provider_interface.h"
 #include "cpio/client_providers/interface/role_credentials_provider_interface.h"
 #include "public/core/interface/execution_result.h"
@@ -62,15 +63,22 @@ class AwsKmsClient : public KmsClient {
 
 class AwsRoleCredentialsProviderFactory {
  public:
+  virtual ~AwsRoleCredentialsProviderFactory() = default;
+
   virtual std::shared_ptr<client_providers::RoleCredentialsProviderInterface>
-  Create(const std::string& region,
-         const std::shared_ptr<core::AsyncExecutorInterface>&,
-         const std::shared_ptr<core::AsyncExecutorInterface>&,
-         const std::shared_ptr<client_providers::AuthTokenProviderInterface>&);
+  Create(
+      const std::string& region,
+      const std::shared_ptr<core::AsyncExecutorInterface>& io_async_executor,
+      const std::shared_ptr<core::AsyncExecutorInterface>& cpu_async_executor,
+      const std::shared_ptr<client_providers::AuthTokenProviderInterface>&
+          auth_token_provider,
+      bool enable_role_credentials_cache = false);
 };
 
 class AwsKmsClientProviderFactory {
  public:
+  virtual ~AwsKmsClientProviderFactory() = default;
+
   virtual std::shared_ptr<client_providers::KmsClientProviderInterface> Create(
       const std::shared_ptr<AwsKmsClientOptions>&,
       const std::shared_ptr<

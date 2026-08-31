@@ -16,6 +16,7 @@
 
 #include "gcp_auth_token_provider.h"
 
+#include <algorithm>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -28,6 +29,7 @@
 
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
+#include "absl/strings/str_join.h"
 #include "absl/strings/str_split.h"
 #include "cc/core/common/uuid/src/uuid.h"
 #include "core/interface/async_executor_interface.h"
@@ -148,6 +150,17 @@ const auto& GetRequiredJWTComponentsForTargetAudienceToken() {
   }();
   return iterator_pair;
 }
+
+string CreateTokenCacheKey(
+    const string& target_audience,
+    const shared_ptr<vector<string>>& key_ids = nullptr) {
+  if (!key_ids || key_ids->empty()) {
+    return target_audience;
+  }
+  vector<string> sorted_key_ids = *key_ids;
+  std::sort(sorted_key_ids.begin(), sorted_key_ids.end());
+  return absl::StrCat(target_audience, ":", absl::StrJoin(sorted_key_ids, ","));
+}
 }  // namespace
 
 namespace google::scp::cpio::client_providers {
@@ -159,6 +172,7 @@ bool TokenIsExpired(const GetSessionTokenResponse& token_reponse) {
 }
 
 GcpAuthTokenProvider::GcpAuthTokenProvider(
+    const shared_ptr<AuthTokenProviderOptions>& options,
     const shared_ptr<HttpClientInterface>& http_client,
     const shared_ptr<AsyncExecutorInterface>& io_async_executor)
     : http_client_(http_client),
@@ -166,7 +180,8 @@ GcpAuthTokenProvider::GcpAuthTokenProvider(
                             RetryStrategy(RetryStrategyOptions{
                                 RetryStrategyType::Exponential,
                                 kGetAuthTokenRetryStrategyDelayInMs,
-                                kGetAuthTokenRetryStrategyMaxRetries})) {}
+                                kGetAuthTokenRetryStrategyMaxRetries})),
+      options_(options ? options : make_shared<AuthTokenProviderOptions>()) {}
 
 ExecutionResult GcpAuthTokenProvider::Init() noexcept {
   if (!http_client_) {
@@ -222,8 +237,10 @@ void GcpAuthTokenProvider::GetSessionTokenForTargetAudience(
       [this](AsyncContext<GetSessionTokenForTargetAudienceRequest,
                           GetSessionTokenResponse>& context) mutable {
         GetSessionTokenResponse token_response;
-        auto result = cached_token_for_target_audience_.Find(
-            *context.request->token_target_audience_uri, token_response);
+        auto cache_key =
+            CreateTokenCacheKey(*context.request->token_target_audience_uri);
+        auto result =
+            cached_token_for_target_audience_.Find(cache_key, token_response);
         if (result.Successful() && !TokenIsExpired(token_response)) {
           SCP_DEBUG(kGcpAuthTokenProvider, kZeroUuid,
                     "Found token cache for target audience with expiration "
@@ -446,31 +463,29 @@ void GcpAuthTokenProvider::OnGetSessionTokenForTargetAudienceCallback(
   uint64_t expiry_seconds =
       json_web_token[kJsonTokenExpiryKeyForTargetAudience].get<uint64_t>();
   token_response.expire_time = seconds(expiry_seconds);
-  auto cached_token_pair = make_pair(
-      *get_token_context.request->token_target_audience_uri, token_response);
+  auto cache_key = CreateTokenCacheKey(
+      *get_token_context.request->token_target_audience_uri);
+  auto cached_token_pair = make_pair(cache_key, token_response);
   // Need to erase the token first because ConcurrentMap::Insert doesn't
   // overwrite.
-  auto result = cached_token_for_target_audience_.Erase(
-      *get_token_context.request->token_target_audience_uri);
+  auto result = cached_token_for_target_audience_.Erase(cache_key);
   // Don't treat it as error because it may happen if some other thread already
   // remove the cached token first.
   if (!result.Successful()) {
-    SCP_DEBUG(
-        kGcpAuthTokenProvider, kZeroUuid,
-        "Failed to erase cached token for target audience. Target audience "
-        "is: %s",
-        get_token_context.request->token_target_audience_uri->c_str());
+    SCP_DEBUG(kGcpAuthTokenProvider, kZeroUuid,
+              "Failed to erase cached token for target audience. Cache key "
+              "is: %s",
+              cache_key.c_str());
   }
   result = cached_token_for_target_audience_.Insert(cached_token_pair,
                                                     token_response);
   // Don't treat it as error because it may happen if some other thread already
   // insert the cached token first.
   if (!result.Successful()) {
-    SCP_DEBUG(
-        kGcpAuthTokenProvider, kZeroUuid,
-        "Failed to insert cached token for target audience. Target audience "
-        "is: %s",
-        get_token_context.request->token_target_audience_uri->c_str());
+    SCP_DEBUG(kGcpAuthTokenProvider, kZeroUuid,
+              "Failed to insert cached token for target audience. Cache key "
+              "is: %s",
+              cache_key.c_str());
   }
   get_token_context.response =
       make_shared<GetSessionTokenResponse>(std::move(token_response));
@@ -479,6 +494,40 @@ void GcpAuthTokenProvider::OnGetSessionTokenForTargetAudienceCallback(
 }
 
 void GcpAuthTokenProvider::GetTeeSessionToken(
+    AsyncContext<GetTeeSessionTokenRequest, GetSessionTokenResponse>&
+        get_token_context) noexcept {
+  if (!options_->enable_token_cache_for_audience_and_signature_keys) {
+    GetTeeSessionTokenInternal(get_token_context);
+    return;
+  }
+  operation_dispatcher_.Dispatch<
+      AsyncContext<GetTeeSessionTokenRequest, GetSessionTokenResponse>>(
+      get_token_context,
+      [this](AsyncContext<GetTeeSessionTokenRequest, GetSessionTokenResponse>&
+                 context) mutable {
+        GetSessionTokenResponse token_response;
+        auto cache_key =
+            CreateTokenCacheKey(*context.request->token_target_audience_uri,
+                                context.request->key_ids);
+        auto result =
+            cached_token_for_target_audience_.Find(cache_key, token_response);
+        if (result.Successful() && !TokenIsExpired(token_response)) {
+          SCP_DEBUG(kGcpAuthTokenProvider, kZeroUuid,
+                    "Found token cache for target audience with expiration "
+                    "time %lld.",
+                    token_response.expire_time.count());
+          context.response =
+              make_shared<GetSessionTokenResponse>(token_response);
+          context.result = SuccessExecutionResult();
+          context.Finish();
+          return SuccessExecutionResult();
+        }
+        GetTeeSessionTokenInternal(context);
+        return SuccessExecutionResult();
+      });
+}
+
+void GcpAuthTokenProvider::GetTeeSessionTokenInternal(
     AsyncContext<GetTeeSessionTokenRequest, GetSessionTokenResponse>&
         get_token_context) noexcept {
   auto request = make_shared<HttpRequest>();
@@ -548,17 +597,108 @@ void GcpAuthTokenProvider::OnGetTeeSessionTokenCallback(
     get_token_context.Finish();
     return;
   }
-  get_token_context.response = make_shared<GetSessionTokenResponse>();
-  get_token_context.response->session_token =
-      make_shared<string>(std::move(token));
+  GetSessionTokenResponse token_response;
+  token_response.session_token = make_shared<string>(token);
 
+  if (!options_->enable_token_cache_for_audience_and_signature_keys) {
+    get_token_context.response =
+        make_shared<GetSessionTokenResponse>(std::move(token_response));
+    get_token_context.result = SuccessExecutionResult();
+    get_token_context.Finish();
+    return;
+  }
+
+  vector<string> token_parts = absl::StrSplit(token, '.');
+  if (token_parts.size() != kExpectedTokenPartsSize) {
+    auto result = RetryExecutionResult(
+        SC_GCP_INSTANCE_AUTHORIZER_PROVIDER_BAD_SESSION_TOKEN);
+    SCP_ERROR_CONTEXT(kGcpAuthTokenProvider, get_token_context, result,
+                      "Received token does not have %d parts: %s",
+                      kExpectedTokenPartsSize, token.c_str());
+    get_token_context.result = result;
+    get_token_context.Finish();
+    return;
+  }
+
+  // The JSON Web Token (JWT) lives in the middle (1) part of the whole
+  // string.
+  auto padded_jwt_or = PadBase64Encoding(token_parts[1]);
+  if (!padded_jwt_or.Successful()) {
+    SCP_ERROR_CONTEXT(
+        kGcpAuthTokenProvider, get_token_context, padded_jwt_or.result(),
+        "Received JWT cannot be padded correctly: %s", token.c_str());
+    get_token_context.result = padded_jwt_or.result();
+    get_token_context.Finish();
+    return;
+  }
+  auto decoded_json_str_or = Base64Decode(*padded_jwt_or);
+  if (!decoded_json_str_or.Successful()) {
+    SCP_ERROR_CONTEXT(kGcpAuthTokenProvider, get_token_context,
+                      decoded_json_str_or.result(),
+                      "Received token JWT could not be decoded.");
+    get_token_context.result = decoded_json_str_or.result();
+    get_token_context.Finish();
+    return;
+  }
+  json json_web_token;
+  try {
+    json_web_token = json::parse(*decoded_json_str_or);
+  } catch (...) {
+    auto result = RetryExecutionResult(
+        SC_GCP_INSTANCE_AUTHORIZER_PROVIDER_BAD_SESSION_TOKEN);
+    SCP_ERROR_CONTEXT(kGcpAuthTokenProvider, get_token_context, result,
+                      "Failed to parse token payload to read expiration.");
+    get_token_context.result = result;
+    get_token_context.Finish();
+    return;
+  }
+
+  if (!json_web_token.contains(kJsonTokenExpiryKeyForTargetAudience)) {
+    auto result = RetryExecutionResult(
+        SC_GCP_INSTANCE_AUTHORIZER_PROVIDER_BAD_SESSION_TOKEN);
+    SCP_ERROR_CONTEXT(kGcpAuthTokenProvider, get_token_context, result,
+                      "Token does not contain expiration key '%s'.",
+                      kJsonTokenExpiryKeyForTargetAudience);
+    get_token_context.result = result;
+    get_token_context.Finish();
+    return;
+  }
+
+  uint64_t expiry_seconds =
+      json_web_token[kJsonTokenExpiryKeyForTargetAudience].get<uint64_t>();
+  token_response.expire_time = seconds(expiry_seconds);
+
+  auto cache_key =
+      CreateTokenCacheKey(*get_token_context.request->token_target_audience_uri,
+                          get_token_context.request->key_ids);
+  auto cached_token_pair = make_pair(cache_key, token_response);
+  auto result = cached_token_for_target_audience_.Erase(cache_key);
+  if (!result.Successful()) {
+    SCP_DEBUG(kGcpAuthTokenProvider, kZeroUuid,
+              "Failed to erase cached token for target audience. Cache key "
+              "is: %s",
+              cache_key.c_str());
+  }
+  result = cached_token_for_target_audience_.Insert(cached_token_pair,
+                                                    token_response);
+  if (!result.Successful()) {
+    SCP_DEBUG(kGcpAuthTokenProvider, kZeroUuid,
+              "Failed to insert cached token for target audience. Cache key "
+              "is: %s",
+              cache_key.c_str());
+  }
+
+  get_token_context.response =
+      make_shared<GetSessionTokenResponse>(std::move(token_response));
   get_token_context.result = SuccessExecutionResult();
   get_token_context.Finish();
 }
 
 std::shared_ptr<AuthTokenProviderInterface> AuthTokenProviderFactory::Create(
+    const std::shared_ptr<AuthTokenProviderOptions>& options,
     const std::shared_ptr<core::HttpClientInterface>& http1_client,
     const shared_ptr<AsyncExecutorInterface>& io_async_executor) {
-  return make_shared<GcpAuthTokenProvider>(http1_client, io_async_executor);
+  return make_shared<GcpAuthTokenProvider>(options, http1_client,
+                                           io_async_executor);
 }
 }  // namespace google::scp::cpio::client_providers

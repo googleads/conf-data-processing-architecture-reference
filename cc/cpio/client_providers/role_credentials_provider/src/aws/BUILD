@@ -29,6 +29,8 @@ cc_library(
         "//cc/public/cpio/interface:type_def",
         "@aws_sdk_cpp//:core",
         "@aws_sdk_cpp//:sts",
+        "@com_google_absl//absl/strings",
+        "@com_google_protobuf//:protobuf",
     ],
 )
 

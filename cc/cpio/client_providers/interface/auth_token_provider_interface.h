@@ -104,6 +104,7 @@ class AuthTokenProviderFactory {
    * AuthTokenProvider.
    */
   static std::shared_ptr<AuthTokenProviderInterface> Create(
+      const std::shared_ptr<AuthTokenProviderOptions>& options,
       const std::shared_ptr<core::HttpClientInterface>& http1_client,
       const std::shared_ptr<core::AsyncExecutorInterface>& io_async_executor);
 };

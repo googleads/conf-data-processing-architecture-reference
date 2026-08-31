@@ -16,6 +16,7 @@
 #include <vector>
 
 #include <aws/core/Aws.h>
+#include <aws/core/utils/DateTime.h>
 #include <aws/sts/STSClient.h>
 #include <aws/sts/STSErrors.h>
 #include <aws/sts/model/AssumeRoleRequest.h>
@@ -30,6 +31,7 @@
 #include "cpio/client_providers/role_credentials_provider/mock/aws/mock_aws_sts_client.h"
 #include "cpio/client_providers/role_credentials_provider/src/aws/error_codes.h"
 #include "cpio/common/src/aws/error_codes.h"
+#include "google/protobuf/util/time_util.h"
 #include "public/core/test/interface/execution_result_matchers.h"
 
 using Aws::InitAPI;
@@ -48,12 +50,15 @@ using Aws::STS::Model::AssumeRoleWithWebIdentityOutcome;
 using Aws::STS::Model::AssumeRoleWithWebIdentityRequest;
 using Aws::STS::Model::AssumeRoleWithWebIdentityResult;
 using Aws::STS::Model::Credentials;
+using Aws::Utils::DateTime;
+using google::protobuf::util::TimeUtil;
 using google::scp::core::AsyncContext;
 using google::scp::core::AsyncExecutorInterface;
 using google::scp::core::FailureExecutionResult;
 using google::scp::core::SuccessExecutionResult;
 using google::scp::core::async_executor::mock::MockAsyncExecutor;
 using google::scp::core::errors::SC_AWS_INTERNAL_SERVICE_ERROR;
+using google::scp::core::errors::SC_AWS_INVALID_CREDENTIALS;
 using google::scp::core::errors::
     SC_AWS_ROLE_CREDENTIALS_PROVIDER_INITIALIZATION_FAILED;
 using google::scp::core::errors::
@@ -441,5 +446,321 @@ TEST_F(AwsRoleCredentialsProviderTest, NullAuthTokenProvider) {
   EXPECT_THAT(role_credentials_provider->Init(),
               ResultIs(FailureExecutionResult(
                   SC_AWS_ROLE_CREDENTIALS_PROVIDER_INITIALIZATION_FAILED)));
+}
+
+TEST_F(AwsRoleCredentialsProviderTest, AssumeRoleWithCacheSuccess) {
+  auto options = make_shared<RoleCredentialsProviderOptions>();
+  options->region = "us-east-1";
+  options->enable_role_credentials_cache = true;
+  auto provider = make_shared<MockAwsRoleCredentialsProviderWithOverrides>(
+      std::move(options));
+  EXPECT_SUCCESS(provider->Init());
+  EXPECT_SUCCESS(provider->Run());
+  auto sts_client = provider->GetSTSClient();
+
+  EXPECT_CALL(*sts_client, AssumeRoleAsync)
+      .WillOnce([&](const AssumeRoleRequest& request,
+                    const AssumeRoleResponseReceivedHandler& handler,
+                    const shared_ptr<const AsyncCallerContext>& context) {
+        AssumeRoleResult result;
+        Credentials credentials;
+        credentials.SetAccessKeyId(kKeyId);
+        credentials.SetSecretAccessKey(kAccessKey);
+        credentials.SetSessionToken(kSecurityToken);
+        credentials.SetExpiration(DateTime(
+            static_cast<double>(TimeUtil::GetCurrentTime().seconds() + 3600)));
+        result.SetCredentials(credentials);
+        AssumeRoleOutcome outcome(result);
+        handler(sts_client.get(), request, outcome, context);
+      });
+
+  // First call fetches from STS.
+  atomic<bool> finished1 = false;
+  auto request1 = make_shared<GetRoleCredentialsRequest>();
+  request1->account_identity = make_shared<string>(kAssumeRoleArn);
+  AsyncContext<GetRoleCredentialsRequest, GetRoleCredentialsResponse> context1(
+      std::move(request1),
+      [&](AsyncContext<GetRoleCredentialsRequest, GetRoleCredentialsResponse>&
+              context) {
+        EXPECT_SUCCESS(context.result);
+        EXPECT_EQ(*context.response->access_key_id, kKeyId);
+        EXPECT_EQ(*context.response->access_key_secret, kAccessKey);
+        EXPECT_EQ(*context.response->security_token, kSecurityToken);
+        finished1 = true;
+      });
+  provider->GetRoleCredentials(context1);
+  WaitUntil([&]() { return finished1.load(); });
+
+  // Second call hits cache (no further AssumeRoleAsync call).
+  atomic<bool> finished2 = false;
+  auto request2 = make_shared<GetRoleCredentialsRequest>();
+  request2->account_identity = make_shared<string>(kAssumeRoleArn);
+  AsyncContext<GetRoleCredentialsRequest, GetRoleCredentialsResponse> context2(
+      std::move(request2),
+      [&](AsyncContext<GetRoleCredentialsRequest, GetRoleCredentialsResponse>&
+              context) {
+        EXPECT_SUCCESS(context.result);
+        EXPECT_EQ(*context.response->access_key_id, kKeyId);
+        EXPECT_EQ(*context.response->access_key_secret, kAccessKey);
+        EXPECT_EQ(*context.response->security_token, kSecurityToken);
+        finished2 = true;
+      });
+  provider->GetRoleCredentials(context2);
+  WaitUntil([&]() { return finished2.load(); });
+
+  EXPECT_SUCCESS(provider->Stop());
+}
+
+TEST_F(AwsRoleCredentialsProviderTest,
+       AssumeRoleWithWebIdentityWithCacheSuccess) {
+  auto options = make_shared<RoleCredentialsProviderOptions>();
+  options->region = "us-east-1";
+  options->enable_role_credentials_cache = true;
+  auto provider = make_shared<MockAwsRoleCredentialsProviderWithOverrides>(
+      std::move(options));
+  EXPECT_SUCCESS(provider->Init());
+  EXPECT_SUCCESS(provider->Run());
+  auto sts_client = provider->GetSTSClient();
+  auto auth_token_provider = provider->GetAuthTokenProvider();
+
+  EXPECT_CALL(*auth_token_provider, GetTeeSessionToken)
+      .WillOnce([&](AsyncContext<GetTeeSessionTokenRequest,
+                                 GetSessionTokenResponse>& context) {
+        context.response = make_shared<GetSessionTokenResponse>();
+        context.response->session_token = make_shared<string>(kTeeSessionToken);
+        context.result = SuccessExecutionResult();
+        context.Finish();
+      });
+
+  EXPECT_CALL(*sts_client, AssumeRoleWithWebIdentityAsync)
+      .WillOnce(
+          [&](const AssumeRoleWithWebIdentityRequest& request,
+              const AssumeRoleWithWebIdentityResponseReceivedHandler& handler,
+              const shared_ptr<const AsyncCallerContext>& context) {
+            AssumeRoleWithWebIdentityResult result;
+            Credentials credentials;
+            credentials.SetAccessKeyId(kKeyId);
+            credentials.SetSecretAccessKey(kAccessKey);
+            credentials.SetSessionToken(kSecurityToken);
+            credentials.SetExpiration(DateTime(static_cast<double>(
+                TimeUtil::GetCurrentTime().seconds() + 3600)));
+            result.SetCredentials(credentials);
+            AssumeRoleWithWebIdentityOutcome outcome(result);
+            handler(sts_client.get(), request, outcome, context);
+          });
+
+  // First call fetches token and assumes role.
+  atomic<bool> finished1 = false;
+  auto request1 = make_shared<GetRoleCredentialsRequest>();
+  request1->account_identity = make_shared<string>(kAssumeRoleArn);
+  request1->target_audience_for_web_identity = kAudience;
+  AsyncContext<GetRoleCredentialsRequest, GetRoleCredentialsResponse> context1(
+      std::move(request1),
+      [&](AsyncContext<GetRoleCredentialsRequest, GetRoleCredentialsResponse>&
+              context) {
+        EXPECT_SUCCESS(context.result);
+        EXPECT_EQ(*context.response->access_key_id, kKeyId);
+        EXPECT_EQ(*context.response->access_key_secret, kAccessKey);
+        EXPECT_EQ(*context.response->security_token, kSecurityToken);
+        finished1 = true;
+      });
+  provider->GetRoleCredentials(context1);
+  WaitUntil([&]() { return finished1.load(); });
+
+  // Second call returns cached credentials directly without calling STS or
+  // AuthTokenProvider.
+  atomic<bool> finished2 = false;
+  auto request2 = make_shared<GetRoleCredentialsRequest>();
+  request2->account_identity = make_shared<string>(kAssumeRoleArn);
+  request2->target_audience_for_web_identity = kAudience;
+  AsyncContext<GetRoleCredentialsRequest, GetRoleCredentialsResponse> context2(
+      std::move(request2),
+      [&](AsyncContext<GetRoleCredentialsRequest, GetRoleCredentialsResponse>&
+              context) {
+        EXPECT_SUCCESS(context.result);
+        EXPECT_EQ(*context.response->access_key_id, kKeyId);
+        EXPECT_EQ(*context.response->access_key_secret, kAccessKey);
+        EXPECT_EQ(*context.response->security_token, kSecurityToken);
+        finished2 = true;
+      });
+  provider->GetRoleCredentials(context2);
+  WaitUntil([&]() { return finished2.load(); });
+
+  EXPECT_SUCCESS(provider->Stop());
+}
+
+TEST_F(AwsRoleCredentialsProviderTest,
+       AssumeRoleWithWebIdentityExpiredCacheRefetches) {
+  auto options = make_shared<RoleCredentialsProviderOptions>();
+  options->region = "us-east-1";
+  options->enable_role_credentials_cache = true;
+  auto provider = make_shared<MockAwsRoleCredentialsProviderWithOverrides>(
+      std::move(options));
+  EXPECT_SUCCESS(provider->Init());
+  EXPECT_SUCCESS(provider->Run());
+  auto sts_client = provider->GetSTSClient();
+  auto auth_token_provider = provider->GetAuthTokenProvider();
+
+  EXPECT_CALL(*auth_token_provider, GetTeeSessionToken)
+      .Times(2)
+      .WillRepeatedly([&](AsyncContext<GetTeeSessionTokenRequest,
+                                       GetSessionTokenResponse>& context) {
+        context.response = make_shared<GetSessionTokenResponse>();
+        context.response->session_token = make_shared<string>(kTeeSessionToken);
+        context.result = SuccessExecutionResult();
+        context.Finish();
+      });
+
+  EXPECT_CALL(*sts_client, AssumeRoleWithWebIdentityAsync)
+      .Times(2)
+      .WillRepeatedly(
+          [&](const AssumeRoleWithWebIdentityRequest& request,
+              const AssumeRoleWithWebIdentityResponseReceivedHandler& handler,
+              const shared_ptr<const AsyncCallerContext>& context) {
+            AssumeRoleWithWebIdentityResult result;
+            Credentials credentials;
+            credentials.SetAccessKeyId(kKeyId);
+            credentials.SetSecretAccessKey(kAccessKey);
+            credentials.SetSessionToken(kSecurityToken);
+            // Expired expiration (only 100s in the future, less than 300s early
+            // expiration window)
+            credentials.SetExpiration(DateTime(static_cast<double>(
+                TimeUtil::GetCurrentTime().seconds() + 100)));
+            result.SetCredentials(credentials);
+            AssumeRoleWithWebIdentityOutcome outcome(result);
+            handler(sts_client.get(), request, outcome, context);
+          });
+
+  // First call.
+  atomic<bool> finished1 = false;
+  auto request1 = make_shared<GetRoleCredentialsRequest>();
+  request1->account_identity = make_shared<string>(kAssumeRoleArn);
+  request1->target_audience_for_web_identity = kAudience;
+  AsyncContext<GetRoleCredentialsRequest, GetRoleCredentialsResponse> context1(
+      std::move(request1),
+      [&](AsyncContext<GetRoleCredentialsRequest, GetRoleCredentialsResponse>&
+              context) {
+        EXPECT_SUCCESS(context.result);
+        finished1 = true;
+      });
+  provider->GetRoleCredentials(context1);
+  WaitUntil([&]() { return finished1.load(); });
+
+  // Second call should refetch because cache was expired.
+  atomic<bool> finished2 = false;
+  auto request2 = make_shared<GetRoleCredentialsRequest>();
+  request2->account_identity = make_shared<string>(kAssumeRoleArn);
+  request2->target_audience_for_web_identity = kAudience;
+  AsyncContext<GetRoleCredentialsRequest, GetRoleCredentialsResponse> context2(
+      std::move(request2),
+      [&](AsyncContext<GetRoleCredentialsRequest, GetRoleCredentialsResponse>&
+              context) {
+        EXPECT_SUCCESS(context.result);
+        finished2 = true;
+      });
+  provider->GetRoleCredentials(context2);
+  WaitUntil([&]() { return finished2.load(); });
+
+  EXPECT_SUCCESS(provider->Stop());
+}
+
+TEST_F(AwsRoleCredentialsProviderTest,
+       AssumeRoleWithCacheFailsWhenExpirationMissing) {
+  auto options = make_shared<RoleCredentialsProviderOptions>();
+  options->region = "us-east-1";
+  options->enable_role_credentials_cache = true;
+  auto provider = make_shared<MockAwsRoleCredentialsProviderWithOverrides>(
+      std::move(options));
+  EXPECT_SUCCESS(provider->Init());
+  EXPECT_SUCCESS(provider->Run());
+  auto sts_client = provider->GetSTSClient();
+
+  EXPECT_CALL(*sts_client, AssumeRoleAsync)
+      .WillOnce([&](const AssumeRoleRequest& request,
+                    const AssumeRoleResponseReceivedHandler& handler,
+                    const shared_ptr<const AsyncCallerContext>& context) {
+        AssumeRoleResult result;
+        Credentials credentials;
+        credentials.SetAccessKeyId(kKeyId);
+        credentials.SetSecretAccessKey(kAccessKey);
+        credentials.SetSessionToken(kSecurityToken);
+        // Expiration is not set (defaults to 0)
+        result.SetCredentials(credentials);
+        AssumeRoleOutcome outcome(result);
+        handler(sts_client.get(), request, outcome, context);
+      });
+
+  atomic<bool> finished = false;
+  auto request = make_shared<GetRoleCredentialsRequest>();
+  request->account_identity = make_shared<string>(kAssumeRoleArn);
+  AsyncContext<GetRoleCredentialsRequest, GetRoleCredentialsResponse> context(
+      std::move(request),
+      [&](AsyncContext<GetRoleCredentialsRequest, GetRoleCredentialsResponse>&
+              context) {
+        EXPECT_THAT(
+            context.result,
+            ResultIs(FailureExecutionResult(SC_AWS_INVALID_CREDENTIALS)));
+        finished = true;
+      });
+  provider->GetRoleCredentials(context);
+  WaitUntil([&]() { return finished.load(); });
+
+  EXPECT_SUCCESS(provider->Stop());
+}
+
+TEST_F(AwsRoleCredentialsProviderTest,
+       AssumeRoleWithWebIdentityWithCacheFailsWhenExpirationMissing) {
+  auto options = make_shared<RoleCredentialsProviderOptions>();
+  options->region = "us-east-1";
+  options->enable_role_credentials_cache = true;
+  auto provider = make_shared<MockAwsRoleCredentialsProviderWithOverrides>(
+      std::move(options));
+  EXPECT_SUCCESS(provider->Init());
+  EXPECT_SUCCESS(provider->Run());
+  auto sts_client = provider->GetSTSClient();
+  auto auth_token_provider = provider->GetAuthTokenProvider();
+
+  EXPECT_CALL(*auth_token_provider, GetTeeSessionToken)
+      .WillOnce([&](AsyncContext<GetTeeSessionTokenRequest,
+                                 GetSessionTokenResponse>& context) {
+        context.response = make_shared<GetSessionTokenResponse>();
+        context.response->session_token = make_shared<string>(kTeeSessionToken);
+        context.result = SuccessExecutionResult();
+        context.Finish();
+      });
+
+  EXPECT_CALL(*sts_client, AssumeRoleWithWebIdentityAsync)
+      .WillOnce(
+          [&](const AssumeRoleWithWebIdentityRequest& request,
+              const AssumeRoleWithWebIdentityResponseReceivedHandler& handler,
+              const shared_ptr<const AsyncCallerContext>& context) {
+            AssumeRoleWithWebIdentityResult result;
+            Credentials credentials;
+            credentials.SetAccessKeyId(kKeyId);
+            credentials.SetSecretAccessKey(kAccessKey);
+            credentials.SetSessionToken(kSecurityToken);
+            // Expiration is not set (defaults to 0)
+            result.SetCredentials(credentials);
+            AssumeRoleWithWebIdentityOutcome outcome(result);
+            handler(sts_client.get(), request, outcome, context);
+          });
+
+  atomic<bool> finished = false;
+  auto request = make_shared<GetRoleCredentialsRequest>();
+  request->account_identity = make_shared<string>(kAssumeRoleArn);
+  request->target_audience_for_web_identity = kAudience;
+  AsyncContext<GetRoleCredentialsRequest, GetRoleCredentialsResponse> context(
+      std::move(request),
+      [&](AsyncContext<GetRoleCredentialsRequest, GetRoleCredentialsResponse>&
+              context) {
+        EXPECT_THAT(
+            context.result,
+            ResultIs(FailureExecutionResult(SC_AWS_INVALID_CREDENTIALS)));
+        finished = true;
+      });
+  provider->GetRoleCredentials(context);
+  WaitUntil([&]() { return finished.load(); });
+
+  EXPECT_SUCCESS(provider->Stop());
 }
 }  // namespace google::scp::cpio::client_providers::test

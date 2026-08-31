@@ -22,6 +22,7 @@
 #include <aws/sts/STSClient.h>
 #include <aws/sts/model/AssumeRoleWithWebIdentityRequest.h>
 
+#include "core/common/concurrent_map/src/concurrent_map.h"
 #include "core/interface/async_executor_interface.h"
 #include "cpio/client_providers/interface/instance_client_provider_interface.h"
 #include "cpio/client_providers/interface/role_credentials_provider_interface.h"
@@ -51,6 +52,11 @@ class AwsRoleCredentialsProvider : public RoleCredentialsProviderInterface {
   void GetRoleCredentials(
       core::AsyncContext<GetRoleCredentialsRequest, GetRoleCredentialsResponse>&
           get_credentials_context) noexcept override;
+
+ private:
+  void GetRoleCredentialsInternal(
+      core::AsyncContext<GetRoleCredentialsRequest, GetRoleCredentialsResponse>&
+          get_credentials_context) noexcept;
 
  protected:
   /**
@@ -114,5 +120,9 @@ class AwsRoleCredentialsProvider : public RoleCredentialsProviderInterface {
 
   /// Auth token provider.
   std::shared_ptr<AuthTokenProviderInterface> auth_token_provider_;
+
+  /// Cached role credentials.
+  core::common::ConcurrentMap<std::string, GetRoleCredentialsResponse>
+      cached_role_credentials_;
 };
 }  // namespace google::scp::cpio::client_providers
