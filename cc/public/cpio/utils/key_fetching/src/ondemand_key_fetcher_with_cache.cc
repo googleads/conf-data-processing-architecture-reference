@@ -22,6 +22,7 @@
 #include <utility>
 
 #include "core/common/global_logger/src/global_logger.h"
+#include "public/core/interface/execution_result_macros.h"
 #include "public/cpio/utils/key_fetching/proto/key_coordinator_configuration.pb.h"
 #include "public/cpio/utils/key_fetching/src/key_fetching_metric_utils.h"
 
@@ -30,6 +31,7 @@
 using google::cmrt::sdk::v1::KeyCoordinatorConfiguration;
 using google::scp::core::AsyncExecutorInterface;
 using google::scp::core::ExecutionResult;
+using google::scp::core::SuccessExecutionResult;
 using google::scp::core::common::kZeroUuid;
 using google::scp::cpio::KeyType;
 using std::nullopt;
@@ -49,6 +51,16 @@ constexpr char kOndemandKeyFetcherWithCacheComponentName[] =
     "EncryptionKeyFetcherWithCache";
 constexpr milliseconds kLogPeriod = milliseconds(1000);
 
+uint64_t GetKeyCacheLifetimeSeconds(
+    const KeyFetcherOptions& key_fetcher_options) {
+  return key_fetcher_options.key_cache_lifetime.count();
+}
+
+uint64_t GetFetchingFailureCacheLifetimeSeconds(
+    const KeyFetcherOptions& key_fetcher_options) {
+  return key_fetcher_options.fetching_failure_cache_lifetime.count();
+}
+
 }  // namespace
 
 OndemandKeyFetcherWithCache::OndemandKeyFetcherWithCache(
@@ -58,10 +70,56 @@ OndemandKeyFetcherWithCache::OndemandKeyFetcherWithCache(
     const KeyCoordinatorConfiguration& key_service_options,
     KeyFetcherOptions key_fetcher_options, const std::string& metric_namespace)
     : CoordinatorKeyFetcherWithCacheBase(
-          async_executor, key_client, metric_client, key_service_options,
-          std::move(key_fetcher_options),
+          key_client, metric_client, key_service_options, key_fetcher_options,
           kOndemandKeyFetcherWithCacheComponentName, KeyType::kEncryptionKey,
-          metric_namespace) {}
+          metric_namespace),
+      key_cache_(
+          GetKeyCacheLifetimeSeconds(key_fetcher_options),
+          true /* extend_entry_lifetime_on_access */,
+          true /* block_entry_while_eviction */,
+          [](auto&, auto&, auto should_delete_entry) {
+            should_delete_entry(true);
+          } /*function on before garbage collection*/,
+          async_executor),
+      fetching_failure_cache_(
+          GetFetchingFailureCacheLifetimeSeconds(key_fetcher_options),
+          false /* extend_entry_lifetime_on_access */,
+          true /* block_entry_while_eviction */,
+          [](auto&, auto&, auto should_delete_entry) {
+            should_delete_entry(true);
+          } /*function on before garbage collection*/,
+          async_executor, key_fetcher_options.use_read_lock_for_cache_read) {}
+
+ExecutionResult OndemandKeyFetcherWithCache::Init() noexcept {
+  RETURN_AND_LOG_IF_FAILURE(key_cache_.Init(),
+                            kOndemandKeyFetcherWithCacheComponentName,
+                            kZeroUuid, "Failed to init key_cache_.");
+  RETURN_AND_LOG_IF_FAILURE(
+      fetching_failure_cache_.Init(), kOndemandKeyFetcherWithCacheComponentName,
+      kZeroUuid, "Failed to init fetching_failure_cache_.");
+  return CoordinatorKeyFetcherWithCacheBase::Init();
+}
+
+ExecutionResult OndemandKeyFetcherWithCache::Run() noexcept {
+  RETURN_AND_LOG_IF_FAILURE(key_cache_.Run(),
+                            kOndemandKeyFetcherWithCacheComponentName,
+                            kZeroUuid, "Failed to run key_cache_.");
+  RETURN_AND_LOG_IF_FAILURE(
+      fetching_failure_cache_.Run(), kOndemandKeyFetcherWithCacheComponentName,
+      kZeroUuid, "Failed to run fetching_failure_cache_.");
+  return CoordinatorKeyFetcherWithCacheBase::Run();
+}
+
+ExecutionResult OndemandKeyFetcherWithCache::Stop() noexcept {
+  RETURN_IF_FAILURE(CoordinatorKeyFetcherWithCacheBase::Stop());
+  RETURN_AND_LOG_IF_FAILURE(key_cache_.Stop(),
+                            kOndemandKeyFetcherWithCacheComponentName,
+                            kZeroUuid, "Failed to stop key_cache_.");
+  RETURN_AND_LOG_IF_FAILURE(
+      fetching_failure_cache_.Stop(), kOndemandKeyFetcherWithCacheComponentName,
+      kZeroUuid, "Failed to stop fetching_failure_cache_.");
+  return SuccessExecutionResult();
+}
 
 void OndemandKeyFetcherWithCache::CacheValidKey(
     const vector<Key>& valid_keys) noexcept {
@@ -111,5 +169,36 @@ OndemandKeyFetcherWithCache::GetFetchingFailureFromCache(
     return failure_result;
   }
   return nullopt;
+}
+
+void OndemandKeyFetcherWithCache::MarkFetchingFinished(
+    const string& key_id) noexcept {
+  std::unique_lock lock(in_progress_key_cache_mutex_);
+  in_progress_key_cache_.erase(key_id);
+  lock.unlock();
+}
+
+bool OndemandKeyFetcherWithCache::MarkFetchingInProgress(
+    const string& key_id) noexcept {
+  std::unique_lock lock(in_progress_key_cache_mutex_);
+  if (auto it = in_progress_key_cache_.find(key_id);
+      it != in_progress_key_cache_.end()) {
+    lock.unlock();
+    return false;
+  } else {
+    in_progress_key_cache_.insert(key_id);
+    lock.unlock();
+    return true;
+  }
+}
+
+bool OndemandKeyFetcherWithCache::FetchingInProgress(
+    const string& key_id) noexcept {
+  bool in_progress = false;
+  std::shared_lock lock(in_progress_key_cache_mutex_);
+  auto it = in_progress_key_cache_.find(key_id);
+  in_progress = it != in_progress_key_cache_.end();
+  lock.unlock();
+  return in_progress;
 }
 }  // namespace google::scp::cpio

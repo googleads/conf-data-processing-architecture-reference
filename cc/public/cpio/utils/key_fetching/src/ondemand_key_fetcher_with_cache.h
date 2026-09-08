@@ -16,6 +16,11 @@
 
 #pragma once
 
+#include <memory>
+
+#include "cc/core/interface/async_executor_interface.h"
+#include "core/common/auto_expiry_concurrent_map/src/auto_expiry_concurrent_map.h"
+
 #include "coordinator_key_fetcher_with_cache_base.h"
 
 namespace google::scp::cpio {
@@ -31,6 +36,12 @@ class OndemandKeyFetcherWithCache : public CoordinatorKeyFetcherWithCacheBase {
           key_service_options,
       KeyFetcherOptions key_fetcher_options,
       const std::string& metric_namespace = {});
+
+  core::ExecutionResult Init() noexcept override;
+
+  core::ExecutionResult Run() noexcept override;
+
+  core::ExecutionResult Stop() noexcept override;
 
  private:
   /// Cache valid keys.
@@ -63,5 +74,26 @@ class OndemandKeyFetcherWithCache : public CoordinatorKeyFetcherWithCacheBase {
   void CacheFailureResult(
       std::string key_id,
       core::ExecutionResult failure_result) noexcept override;
+
+  /// Remove key_id from in_progress cache.
+  void MarkFetchingFinished(const std::string& key_id) noexcept override;
+  /**
+   * @brief Add key_id to in_progress cache when it is not yet.
+   *
+   * @return true made the operation.
+   * @return false the key_id is already in the in progress cache and skip add.
+   */
+  bool MarkFetchingInProgress(const std::string& key_id) noexcept override;
+  /// Check if the key_id is in the in progress cache.
+  bool FetchingInProgress(const std::string& key_id) noexcept override;
+
+  core::common::AutoExpiryConcurrentMap<std::string, Key> key_cache_;
+  // A cache of key IDs and key fetching failures.
+  core::common::AutoExpiryConcurrentMap<std::string, core::ExecutionResult>
+      fetching_failure_cache_;
+
+  std::shared_mutex in_progress_key_cache_mutex_;
+  // Store the key IDs which a thread is fetching the key for.
+  std::unordered_set<std::string> in_progress_key_cache_;
 };
 }  // namespace google::scp::cpio

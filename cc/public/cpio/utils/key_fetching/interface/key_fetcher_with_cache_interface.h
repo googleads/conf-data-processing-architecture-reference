@@ -114,6 +114,13 @@ class KeyFetcherWithCacheInterface
     // Default not implemented error
     return core::FailureExecutionResult(SC_UNKNOWN);
   }
+
+  /// @brief Validate a key is allowed for this application type.
+  /// @return Key or key not found error.
+  virtual core::ExecutionResultOr<bool> ValidateKey(
+      const std::string& key_id) noexcept {
+    return core::FailureExecutionResult(SC_UNKNOWN);
+  }
 };
 
 }  // namespace google::scp::cpio

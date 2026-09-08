@@ -183,10 +183,6 @@ template <typename WrappedKeyType>
 ExecutionResultOr<string> WrappedKeyHandlerWithCacheBase<WrappedKeyType>::
     DecryptValidateAndCacheDecryptedDek(
         const WrappedKeyType& wrapped_key) noexcept {
-  SCP_INFO(kWrappedKeyHandlerWithCacheBaseComponentName, kZeroUuid,
-           "Decrypt encrypted_dek from wrapped key (%s).",
-           WrappedKeyToDebugString(wrapped_key).c_str());
-
   // Log new wrapped key decryption metric using OpenTelemetry
   PushKeyFetchingRequestMetric(metric_client_, GetKeyType(),
                                KeyFetchingType::kOnDemand,

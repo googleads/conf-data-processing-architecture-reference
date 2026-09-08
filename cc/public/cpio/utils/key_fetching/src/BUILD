@@ -60,7 +60,6 @@ cc_library(
         ":error_codes",
         ":key_fetching_metric_utils",
         ":key_fetching_utils",
-        "//cc/core/common/auto_expiry_concurrent_map/src:auto_expiry_concurrent_map_lib",
         "//cc/core/common/global_logger/src:global_logger_lib",
         "//cc/public/core/interface:execution_result",
         "//cc/public/cpio/interface:cpio_errors",
@@ -83,6 +82,7 @@ cc_library(
     ],
     deps = [
         ":coordinator_key_fetcher_with_cache_base",
+        "//cc/core/common/auto_expiry_concurrent_map/src:auto_expiry_concurrent_map_lib",
     ],
 )
 

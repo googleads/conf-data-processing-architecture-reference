@@ -16,7 +16,6 @@
 
 #pragma once
 
-#include <memory>
 #include <optional>
 #include <set>
 #include <shared_mutex>
@@ -25,8 +24,6 @@
 #include <vector>
 
 #include "absl/strings/string_view.h"
-#include "cc/core/interface/async_executor_interface.h"
-#include "core/common/auto_expiry_concurrent_map/src/auto_expiry_concurrent_map.h"
 #include "public/core/interface/execution_result.h"
 #include "public/cpio/interface/private_key_client/private_key_client_interface.h"
 #include "public/cpio/utils/dual_writing_metric_client/interface/dual_writing_metric_client_interface.h"
@@ -40,8 +37,6 @@ namespace google::scp::cpio {
 class CoordinatorKeyFetcherWithCacheBase : public KeyFetcherWithCacheInterface {
  public:
   explicit CoordinatorKeyFetcherWithCacheBase(
-      std::shared_ptr<google::scp::core::AsyncExecutorInterface>&
-          async_executor,
       PrivateKeyClientInterface& key_client,
       DualWritingMetricClientInterface& metric_client,
       const google::cmrt::sdk::v1::KeyCoordinatorConfiguration&
@@ -50,6 +45,9 @@ class CoordinatorKeyFetcherWithCacheBase : public KeyFetcherWithCacheInterface {
       absl::string_view key_type, const std::string& metric_namespace = {});
 
   core::ExecutionResultOr<Key> GetKey(
+      const std::string& key_id) noexcept override;
+
+  core::ExecutionResultOr<bool> ValidateKey(
       const std::string& key_id) noexcept override;
 
   core::ExecutionResult Init() noexcept override;
@@ -89,12 +87,23 @@ class CoordinatorKeyFetcherWithCacheBase : public KeyFetcherWithCacheInterface {
   virtual void CacheFailureResult(
       std::string key_id, core::ExecutionResult failure_result) noexcept = 0;
 
-  core::common::AutoExpiryConcurrentMap<std::string, Key> key_cache_;
-  // A cache of key IDs and key fetching failures.
-  core::common::AutoExpiryConcurrentMap<std::string, core::ExecutionResult>
-      fetching_failure_cache_;
+  /// Remove key_id from in_progress cache.
+  virtual void MarkFetchingFinished(const std::string& key_id) noexcept = 0;
+  /**
+   * @brief Add key_id to in_progress cache when it is not yet.
+   *
+   * @return true made the operation.
+   * @return false the key_id is already in the in progress cache and skip add.
+   */
+  virtual bool MarkFetchingInProgress(const std::string& key_id) noexcept = 0;
+  /// Check if the key_id is in the in progress cache.
+  virtual bool FetchingInProgress(const std::string& key_id) noexcept = 0;
 
  private:
+  // Get the key from valid key cache or fetch it from remote.
+  core::ExecutionResultOr<Key> GetKeyInternal(
+      const std::string& key_id) noexcept;
+
   // The input keyset_name is only used for metrics.
   core::ExecutionResultOr<
       google::cmrt::sdk::private_key_service::v1::ListPrivateKeysResponse>
@@ -162,19 +171,8 @@ class CoordinatorKeyFetcherWithCacheBase : public KeyFetcherWithCacheInterface {
           google::cmrt::sdk::private_key_service::v1::ListPrivateKeysResponse>&
           list_keys_response_or) noexcept;
 
-  /// Remove key_id to in_progress cache.
-  void MarkFetchingFinished(const std::string& key_id) noexcept;
-  /**
-   * @brief Add key_id to in_progress cache when it is not yet.
-   *
-   * @return true made the operation.
-   * @return false the key_id is already in the in progress cache and skip add.
-   */
-  bool MarkFetchingInProgress(const std::string& key_id) noexcept;
   /// Wait for the key fetching finishing.
   void WaitForKeyReady(const std::string& key_id) noexcept;
-  /// Check if the key_id is in the in progress cache.
-  bool FetchingInProgress(const std::string& key_id) noexcept;
 
   // Function to convert an error during key fetching to a string
   // for metric recording.
@@ -195,9 +193,5 @@ class CoordinatorKeyFetcherWithCacheBase : public KeyFetcherWithCacheInterface {
   std::string allowed_keysets_name_;
   std::string component_name_;
   std::string key_type_;
-
-  std::shared_mutex in_progress_key_cache_mutex_;
-  // Store the key IDs which a thread is fetching the key for.
-  std::unordered_set<std::string> in_progress_key_cache_;
 };
 }  // namespace google::scp::cpio

@@ -29,6 +29,7 @@
 #include "core/common/global_logger/src/global_logger.h"
 #include "google/protobuf/util/time_util.h"
 #include "public/core/interface/execution_result_macros.h"
+#include "public/core/interface/execution_result_or_macros.h"
 #include "public/cpio/interface/error_codes.h"
 #include "public/cpio/utils/key_fetching/src/key_fetching_metric_utils.h"
 
@@ -43,7 +44,6 @@ using google::cmrt::sdk::private_key_service::v1::ListPrivateKeysRequest;
 using google::cmrt::sdk::private_key_service::v1::ListPrivateKeysResponse;
 using google::cmrt::sdk::v1::KeyCoordinatorConfiguration;
 using google::protobuf::util::TimeUtil;
-using google::scp::core::AsyncExecutorInterface;
 using google::scp::core::ExecutionResult;
 using google::scp::core::FailureExecutionResult;
 using google::scp::core::StatusCode;
@@ -80,16 +80,6 @@ const absl::flat_hash_set<StatusCode> kUnretryableKeyFetchingErrors = {
     SC_CPIO_KEY_NOT_FOUND, SC_CPIO_KEY_COUNT_MISMATCH, SC_CPIO_ENTITY_NOT_FOUND,
     SC_CPIO_INVALID_ARGUMENT};
 
-uint64_t GetKeyCacheLifetimeSeconds(
-    const KeyFetcherOptions& key_fetcher_options) {
-  return key_fetcher_options.key_cache_lifetime.count();
-}
-
-uint64_t GetFetchingFailureCacheLifetimeSeconds(
-    const KeyFetcherOptions& key_fetcher_options) {
-  return key_fetcher_options.fetching_failure_cache_lifetime.count();
-}
-
 ListPrivateKeysRequest GetListPrivateKeysRequestBase(
     const KeyCoordinatorConfiguration& key_service_options) {
   ListPrivateKeysRequest request;
@@ -121,29 +111,12 @@ ListActiveEncryptionKeysRequest GetListActiveKeysRequestBase(
 }  // namespace
 
 CoordinatorKeyFetcherWithCacheBase::CoordinatorKeyFetcherWithCacheBase(
-    shared_ptr<AsyncExecutorInterface>& async_executor,
     PrivateKeyClientInterface& key_client,
     DualWritingMetricClientInterface& metric_client,
     const KeyCoordinatorConfiguration& key_service_options,
     KeyFetcherOptions key_fetcher_options, absl::string_view component_name,
     absl::string_view key_type, const std::string& metric_namespace)
-    : key_cache_(
-          GetKeyCacheLifetimeSeconds(key_fetcher_options),
-          true /* extend_entry_lifetime_on_access */,
-          true /* block_entry_while_eviction */,
-          [](auto&, auto&, auto should_delete_entry) {
-            should_delete_entry(true);
-          } /*function on before garbage collection*/,
-          async_executor),
-      fetching_failure_cache_(
-          GetFetchingFailureCacheLifetimeSeconds(key_fetcher_options),
-          false /* extend_entry_lifetime_on_access */,
-          true /* block_entry_while_eviction */,
-          [](auto&, auto&, auto should_delete_entry) {
-            should_delete_entry(true);
-          } /*function on before garbage collection*/,
-          async_executor, key_fetcher_options.use_read_lock_for_cache_read),
-      key_client_(key_client),
+    : key_client_(key_client),
       list_private_keys_request_base_(
           GetListPrivateKeysRequestBase(key_service_options)),
       list_active_keys_request_base_(
@@ -158,21 +131,10 @@ CoordinatorKeyFetcherWithCacheBase::CoordinatorKeyFetcherWithCacheBase(
 }
 
 ExecutionResult CoordinatorKeyFetcherWithCacheBase::Init() noexcept {
-  RETURN_AND_LOG_IF_FAILURE(key_cache_.Init(), component_name_, kZeroUuid,
-                            "Failed to init key_cache_.");
-  RETURN_AND_LOG_IF_FAILURE(fetching_failure_cache_.Init(), component_name_,
-                            kZeroUuid,
-                            "Failed to init fetching_failure_cache_.");
   return SuccessExecutionResult();
 }
 
 ExecutionResult CoordinatorKeyFetcherWithCacheBase::Run() noexcept {
-  RETURN_AND_LOG_IF_FAILURE(key_cache_.Run(), component_name_, kZeroUuid,
-                            "Failed to run key_cache_.");
-  RETURN_AND_LOG_IF_FAILURE(fetching_failure_cache_.Run(), component_name_,
-                            kZeroUuid,
-                            "Failed to run fetching_failure_cache_.");
-
   if (key_fetcher_options_.prefetch_keys) {
     PrefetchKeys();
   }
@@ -181,11 +143,6 @@ ExecutionResult CoordinatorKeyFetcherWithCacheBase::Run() noexcept {
 }
 
 ExecutionResult CoordinatorKeyFetcherWithCacheBase::Stop() noexcept {
-  RETURN_AND_LOG_IF_FAILURE(key_cache_.Stop(), component_name_, kZeroUuid,
-                            "Failed to stop key_cache_.");
-  RETURN_AND_LOG_IF_FAILURE(fetching_failure_cache_.Stop(), component_name_,
-                            kZeroUuid,
-                            "Failed to stop fetching_failure_cache_.");
   return SuccessExecutionResult();
 }
 
@@ -193,8 +150,8 @@ core::ExecutionResultOr<ListPrivateKeysResponse>
 CoordinatorKeyFetcherWithCacheBase::FetchKeysFromRemote(
     const ListPrivateKeysRequest& request, absl::string_view key_fetching_type,
     absl::string_view keyset_name) {
-  PushKeyFetchingRequestMetric(metric_client_, key_type_,
-                               key_fetching_type, keyset_name);
+  PushKeyFetchingRequestMetric(metric_client_, key_type_, key_fetching_type,
+                               keyset_name);
   auto fetching_start_time_in_ns =
       TimeProvider::GetSteadyTimestampInNanosecondsAsClockTicks();
 
@@ -206,9 +163,8 @@ CoordinatorKeyFetcherWithCacheBase::FetchKeysFromRemote(
       duration_cast<milliseconds>(
           nanoseconds(fetching_end_time_in_ns - fetching_start_time_in_ns))
           .count();
-  PushKeyFetchingLatencyMetric(metric_client_, key_type_,
-                               key_fetching_type, keyset_name,
-                               latency_in_millis);
+  PushKeyFetchingLatencyMetric(metric_client_, key_type_, key_fetching_type,
+                               keyset_name, latency_in_millis);
 
   if (!response_or.Successful()) {
     PushKeyFetchingErrorMetric(
@@ -222,8 +178,8 @@ core::ExecutionResultOr<ListActiveEncryptionKeysResponse>
 CoordinatorKeyFetcherWithCacheBase::FetchKeysFromRemoteWithActiveKeysApi(
     const ListActiveEncryptionKeysRequest& request,
     absl::string_view key_fetching_type, absl::string_view keyset_name) {
-  PushKeyFetchingRequestMetric(metric_client_, key_type_,
-                               key_fetching_type, keyset_name);
+  PushKeyFetchingRequestMetric(metric_client_, key_type_, key_fetching_type,
+                               keyset_name);
   auto fetching_start_time_in_ns =
       TimeProvider::GetSteadyTimestampInNanosecondsAsClockTicks();
 
@@ -235,9 +191,8 @@ CoordinatorKeyFetcherWithCacheBase::FetchKeysFromRemoteWithActiveKeysApi(
       duration_cast<milliseconds>(
           nanoseconds(fetching_end_time_in_ns - fetching_start_time_in_ns))
           .count();
-  PushKeyFetchingLatencyMetric(metric_client_, key_type_,
-                               key_fetching_type, keyset_name,
-                               latency_in_millis);
+  PushKeyFetchingLatencyMetric(metric_client_, key_type_, key_fetching_type,
+                               keyset_name, latency_in_millis);
 
   if (!response_or.Successful()) {
     PushKeyFetchingErrorMetric(
@@ -445,9 +400,8 @@ CoordinatorKeyFetcherWithCacheBase::ValidateAndCacheKey(
           nanoseconds(current_time - keys[0].activation_timestamp))
           .count() /
       24;
-  PushKeyAgeInDaysMetric(metric_client_, key_type_,
-                         KeyFetchingType::kOnDemand, keyset_name,
-                         key_age_in_days);
+  PushKeyAgeInDaysMetric(metric_client_, key_type_, KeyFetchingType::kOnDemand,
+                         keyset_name, key_age_in_days);
 
   SCP_INFO(component_name_, kZeroUuid,
            "OndemandFetchingKeyId: %s | KeysetName: %s | KeyAge: %d",
@@ -457,14 +411,13 @@ CoordinatorKeyFetcherWithCacheBase::ValidateAndCacheKey(
   return keys[0];
 }
 
-core::ExecutionResultOr<Key> CoordinatorKeyFetcherWithCacheBase::GetKey(
+core::ExecutionResultOr<Key> CoordinatorKeyFetcherWithCacheBase::GetKeyInternal(
     const std::string& key_id) noexcept {
   auto key = GetKeyFromValidKeyCache(key_id);
   if (key.has_value()) {
     // Use allowed_keysets_name_ which might be a list to represent the keyset
     // because we don't have exact keyset_name available in the cache.
-    PushKeyCacheStatusMetric(metric_client_, key_type_,
-                             allowed_keysets_name_,
+    PushKeyCacheStatusMetric(metric_client_, key_type_, allowed_keysets_name_,
                              KeyCacheStatus::kValidKeyCacheHit);
     return key.value();
   }
@@ -472,14 +425,12 @@ core::ExecutionResultOr<Key> CoordinatorKeyFetcherWithCacheBase::GetKey(
   // Only return directly when the failure is not retryable.
   if (failure_result.has_value() &&
       kUnretryableKeyFetchingErrors.contains(failure_result->status_code)) {
-    PushKeyCacheStatusMetric(metric_client_, key_type_,
-                             allowed_keysets_name_,
+    PushKeyCacheStatusMetric(metric_client_, key_type_, allowed_keysets_name_,
                              KeyCacheStatus::kInvalidKeyCacheHit);
     return failure_result.value();
   }
 
-  PushKeyCacheStatusMetric(metric_client_, key_type_,
-                           allowed_keysets_name_,
+  PushKeyCacheStatusMetric(metric_client_, key_type_, allowed_keysets_name_,
                            KeyCacheStatus::kValidKeyCacheMiss);
 
   if (!FetchingInProgress(key_id)) {
@@ -526,25 +477,18 @@ core::ExecutionResultOr<Key> CoordinatorKeyFetcherWithCacheBase::GetKey(
   return timeout_failure;
 }
 
-void CoordinatorKeyFetcherWithCacheBase::MarkFetchingFinished(
-    const string& key_id) noexcept {
-  std::unique_lock lock(in_progress_key_cache_mutex_);
-  in_progress_key_cache_.erase(key_id);
-  lock.unlock();
+core::ExecutionResultOr<Key> CoordinatorKeyFetcherWithCacheBase::GetKey(
+    const std::string& key_id) noexcept {
+  return GetKeyInternal(key_id);
 }
 
-bool CoordinatorKeyFetcherWithCacheBase::MarkFetchingInProgress(
-    const string& key_id) noexcept {
-  std::unique_lock lock(in_progress_key_cache_mutex_);
-  if (auto it = in_progress_key_cache_.find(key_id);
-      it != in_progress_key_cache_.end()) {
-    lock.unlock();
-    return false;
-  } else {
-    in_progress_key_cache_.insert(key_id);
-    lock.unlock();
+core::ExecutionResultOr<bool> CoordinatorKeyFetcherWithCacheBase::ValidateKey(
+    const std::string& key_id) noexcept {
+  ASSIGN_OR_RETURN(auto key, GetKeyInternal(key_id));
+  if (!key.private_key.empty()) {
     return true;
   }
+  return false;
 }
 
 void CoordinatorKeyFetcherWithCacheBase::WaitForKeyReady(
@@ -557,16 +501,6 @@ void CoordinatorKeyFetcherWithCacheBase::WaitForKeyReady(
     sleep_for(kThreadSleepIntervalForKeyReady);
     end_time = system_clock::now();
   }
-}
-
-bool CoordinatorKeyFetcherWithCacheBase::FetchingInProgress(
-    const string& key_id) noexcept {
-  bool in_progress = false;
-  std::shared_lock lock(in_progress_key_cache_mutex_);
-  auto it = in_progress_key_cache_.find(key_id);
-  in_progress = it != in_progress_key_cache_.end();
-  lock.unlock();
-  return in_progress;
 }
 
 string CoordinatorKeyFetcherWithCacheBase::MapToKeyFetchingErrorString(
