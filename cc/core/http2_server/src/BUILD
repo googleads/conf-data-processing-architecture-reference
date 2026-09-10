@@ -27,8 +27,11 @@ cc_library(
     deps = [
         "//cc:cc_base_include_dir",
         "//cc/core/authorization_proxy/src:core_authorization_proxy_lib",
+        "//cc/core/common/time_provider/src:time_provider_lib",
         "//cc/core/interface:interface_lib",
         "//cc/cpio/client_providers/metric_client_provider/src:metric_client_provider_lib",
+        "//cc/public/cpio/interface/metric_client:metric_client_interface",
+        "//cc/public/cpio/proto/metric_service/v1:metric_service_cc_proto",
         "//cc/public/cpio/utils/metric_instance/interface:metric_instance_interface",
         "//cc/public/cpio/utils/metric_instance/interface:type_def",
         "//cc/public/cpio/utils/metric_instance/src:metric_instance",

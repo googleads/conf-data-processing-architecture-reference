@@ -35,17 +35,25 @@
 #include "core/http2_server/mock/mock_http2_response_with_overrides.h"
 #include "core/http2_server/mock/mock_http2_server_with_overrides.h"
 #include "core/http2_server/src/error_codes.h"
+#include "core/interface/metrics_def.h"
 #include "core/test/utils/conditional_wait.h"
 #include "core/test/utils/scp_test_base.h"
 #include "public/core/test/interface/execution_result_matchers.h"
+#include "public/cpio/mock/metric_client/mock_metric_client.h"
+#include "public/cpio/proto/metric_service/v1/metric_service.pb.h"
 #include "public/cpio/utils/metric_instance/mock/mock_metric_instance_factory.h"
 
+using google::cmrt::sdk::metric_service::v1::MetricType;
+using google::cmrt::sdk::metric_service::v1::MetricUnit;
+using google::cmrt::sdk::metric_service::v1::PutMetricsRequest;
+using google::cmrt::sdk::metric_service::v1::PutMetricsResponse;
 using google::scp::core::AsyncExecutor;
 using google::scp::core::AuthorizationProxyInterface;
 using google::scp::core::Http2Server;
 using google::scp::core::HttpClient;
 using google::scp::core::async_executor::mock::MockAsyncExecutor;
 using google::scp::core::authorization_proxy::mock::MockAuthorizationProxy;
+using google::scp::core::common::TimeProvider;
 using google::scp::core::common::Uuid;
 using google::scp::core::config_provider::mock::MockConfigProvider;
 using google::scp::core::http2_server::mock::MockHttp2ServerWithOverrides;
@@ -54,6 +62,7 @@ using google::scp::core::http2_server::mock::MockNgHttp2ResponseWithOverrides;
 using google::scp::core::test::ScpTestBase;
 using google::scp::core::test::WaitUntil;
 using google::scp::cpio::MetricInstanceFactoryInterface;
+using google::scp::cpio::MockMetricClient;
 using google::scp::cpio::MockMetricInstanceFactory;
 using std::make_shared;
 using std::promise;
@@ -210,7 +219,8 @@ TEST_F(Http2ServerTest, HandleHttp2RequestFailed) {
   nghttp2::asio_http2::server::request request;
   nghttp2::asio_http2::server::response response;
   AsyncContext<NgHttp2Request, NgHttp2Response> ng_http2_context(
-      make_shared<NgHttp2Request>(request),
+      make_shared<NgHttp2Request>(
+          request, TimeProvider::GetSteadyTimestampInNanoseconds()),
       [&](AsyncContext<NgHttp2Request, NgHttp2Response>&) {
         should_continue = true;
       });
@@ -251,7 +261,8 @@ TEST_F(Http2ServerTest, OnHttp2PendingCallbackFailure) {
   nghttp2::asio_http2::server::request request;
   nghttp2::asio_http2::server::response response;
   AsyncContext<NgHttp2Request, NgHttp2Response> ng_http2_context(
-      make_shared<NgHttp2Request>(request),
+      make_shared<NgHttp2Request>(
+          request, TimeProvider::GetSteadyTimestampInNanoseconds()),
       [&](AsyncContext<NgHttp2Request, NgHttp2Response>&) {
         should_continue = true;
       });
@@ -303,7 +314,8 @@ TEST_F(Http2ServerTest, OnHttp2PendingCallbackHttpHandlerFailure) {
   nghttp2::asio_http2::server::request request;
   nghttp2::asio_http2::server::response response;
   AsyncContext<NgHttp2Request, NgHttp2Response> ng_http2_context(
-      make_shared<NgHttp2Request>(request),
+      make_shared<NgHttp2Request>(
+          request, TimeProvider::GetSteadyTimestampInNanoseconds()),
       [&](AsyncContext<NgHttp2Request, NgHttp2Response>& http2_context) {
         EXPECT_THAT(http2_context.result,
                     ResultIs(FailureExecutionResult(12345)));
@@ -339,9 +351,11 @@ TEST_F(Http2ServerTest,
       true, make_shared<string>("/file/that/dos/not/exist.pem"),
       make_shared<string>("./public.crt"));
 
-  Http2Server http_server(host_address, port, thread_pool_size, async_executor,
-                          mock_authorization_proxy, nullptr /* metric_client */,
-                          mock_config_provider, http2_server_options);
+  Http2Server http_server(
+      host_address, port, thread_pool_size, async_executor,
+      mock_authorization_proxy,
+      shared_ptr<MetricInstanceFactoryInterface>() /* metric_client */,
+      mock_config_provider, http2_server_options);
 
   EXPECT_THAT(http_server.Init(),
               ResultIs(FailureExecutionResult(
@@ -361,9 +375,11 @@ TEST_F(Http2ServerTest,
       true, make_shared<string>("./privatekey.pem"),
       make_shared<string>("/file/that/dos/not/exist.crt"));
 
-  Http2Server http_server(host_address, port, thread_pool_size, async_executor,
-                          mock_authorization_proxy, nullptr /* metric_client */,
-                          mock_config_provider, http2_server_options);
+  Http2Server http_server(
+      host_address, port, thread_pool_size, async_executor,
+      mock_authorization_proxy,
+      shared_ptr<MetricInstanceFactoryInterface>() /* metric_client */,
+      mock_config_provider, http2_server_options);
 
   EXPECT_THAT(http_server.Init(),
               ResultIs(FailureExecutionResult(
@@ -511,7 +527,9 @@ TEST_F(Http2ServerTest,
        OnBodyDataReceivedWithExtraDataReturnsPartialDataError) {
   {
     nghttp2::asio_http2::server::request ng_request;
-    MockNgHttp2RequestWithOverrides request(ng_request, 10 /* body length */);
+    MockNgHttp2RequestWithOverrides request(
+        ng_request, std::chrono::nanoseconds(0) /* start timestamp */,
+        10 /* body length */);
 
     // Without callback to ensure nothing goes wrong.
     uint8_t data[11];
@@ -519,7 +537,9 @@ TEST_F(Http2ServerTest,
   }
   {
     nghttp2::asio_http2::server::request ng_request;
-    MockNgHttp2RequestWithOverrides request(ng_request, 10 /* body length */);
+    MockNgHttp2RequestWithOverrides request(
+        ng_request, std::chrono::nanoseconds(0) /* start timestamp */,
+        10 /* body length */);
 
     // Install callback
     bool callback_called = false;
@@ -538,7 +558,9 @@ TEST_F(Http2ServerTest,
 TEST_F(Http2ServerTest, OnBodyDataReceivedWithExactDataIsSuccessful) {
   {
     nghttp2::asio_http2::server::request ng_request;
-    MockNgHttp2RequestWithOverrides request(ng_request, 10 /* body length */);
+    MockNgHttp2RequestWithOverrides request(
+        ng_request, std::chrono::nanoseconds(0) /* start timestamp */,
+        10 /* body length */);
 
     // Without callback to ensure nothing goes wrong.
     uint8_t data[10];
@@ -547,7 +569,9 @@ TEST_F(Http2ServerTest, OnBodyDataReceivedWithExactDataIsSuccessful) {
   }
   {
     nghttp2::asio_http2::server::request ng_request;
-    MockNgHttp2RequestWithOverrides request(ng_request, 10 /* body length */);
+    MockNgHttp2RequestWithOverrides request(
+        ng_request, std::chrono::nanoseconds(0) /* start timestamp */,
+        10 /* body length */);
 
     // Install callback
     bool callback_called = false;
@@ -566,7 +590,9 @@ TEST_F(Http2ServerTest, OnBodyDataReceivedWithExactDataIsSuccessful) {
 TEST_F(Http2ServerTest, OnBodyDataReceivedWithLessDataReturnsPartialDataError) {
   {
     nghttp2::asio_http2::server::request ng_request;
-    MockNgHttp2RequestWithOverrides request(ng_request, 10 /* body length */);
+    MockNgHttp2RequestWithOverrides request(
+        ng_request, std::chrono::nanoseconds(0) /* start timestamp */,
+        10 /* body length */);
 
     // Without callback to ensure nothing goes wrong.
     uint8_t data[2];
@@ -575,7 +601,9 @@ TEST_F(Http2ServerTest, OnBodyDataReceivedWithLessDataReturnsPartialDataError) {
   }
   {
     nghttp2::asio_http2::server::request ng_request;
-    MockNgHttp2RequestWithOverrides request(ng_request, 10 /* body length */);
+    MockNgHttp2RequestWithOverrides request(
+        ng_request, std::chrono::nanoseconds(0) /* start timestamp */,
+        10 /* body length */);
 
     // Install callback
     bool callback_called = false;
@@ -592,4 +620,238 @@ TEST_F(Http2ServerTest, OnBodyDataReceivedWithLessDataReturnsPartialDataError) {
   }
 }
 
+TEST_F(Http2ServerTest, RecordsEndToEndLatencyMetricOnResponse) {
+  string host_address("localhost");
+  string port("0");
+
+  auto mock_authorization_proxy = make_shared<MockAuthorizationProxy>();
+  auto mock_metric_client = make_shared<MockMetricClient>();
+
+  PutMetricsRequest captured_request;
+  EXPECT_CALL(*mock_metric_client, PutMetricsSync(testing::_))
+      .WillOnce([&](PutMetricsRequest request) {
+        captured_request = std::move(request);
+        return PutMetricsResponse();
+      });
+
+  MockHttp2ServerWithOverrides http_server(
+      host_address, port, async_executor, mock_authorization_proxy,
+      mock_metric_client, mock_config_provider);
+
+  nghttp2::asio_http2::server::request request;
+  nghttp2::asio_http2::server::response response;
+  // Set start timestamp to 1.25ms ago
+  auto mock_http2_request = make_shared<MockNgHttp2RequestWithOverrides>(
+      request,
+      TimeProvider::GetSteadyTimestampInNanoseconds() -
+          std::chrono::nanoseconds(1'250'000),
+      10 /* body length */);
+  auto mock_http2_response =
+      make_shared<MockNgHttp2ResponseWithOverrides>(response);
+  AsyncContext<NgHttp2Request, NgHttp2Response> ng_http2_context(
+      mock_http2_request,
+      [](AsyncContext<NgHttp2Request, NgHttp2Response>&) {});
+  ng_http2_context.response = mock_http2_response;
+  ng_http2_context.result = SuccessExecutionResult();
+
+  http_server.OnHttp2Response(ng_http2_context,
+                              Http2Server::RequestTargetEndpointType::Local);
+
+  EXPECT_EQ(captured_request.metric_namespace(), "http2_server");
+  EXPECT_EQ(captured_request.metrics_size(), 1);
+  EXPECT_EQ(captured_request.metrics(0).name(), "HttpRequestLatency");
+  EXPECT_EQ(captured_request.metrics(0).unit(),
+            MetricUnit::METRIC_UNIT_MILLISECONDS);
+  EXPECT_EQ(captured_request.metrics(0).type(),
+            MetricType::METRIC_TYPE_HISTOGRAM);
+  EXPECT_EQ(captured_request.metrics(0).labels().at("ComponentName"),
+            "Http2Server");
+  EXPECT_EQ(captured_request.metrics(0).labels().at(kMetricLabelIsSuccessful),
+            "true");
+  double latency = std::stod(captured_request.metrics(0).value());
+  EXPECT_GE(latency, 1.25);
+}
+
+TEST_F(Http2ServerTest, RecordsOtelLatencyMetricOnFailedResponse) {
+  string host_address("localhost");
+  string port("0");
+
+  auto mock_authorization_proxy = make_shared<MockAuthorizationProxy>();
+  auto mock_metric_client = make_shared<MockMetricClient>();
+
+  PutMetricsRequest captured_request;
+  EXPECT_CALL(*mock_metric_client, PutMetricsSync(testing::_))
+      .WillOnce([&](PutMetricsRequest request) {
+        captured_request = std::move(request);
+        return PutMetricsResponse();
+      });
+
+  Http2ServerOptions options;
+  options.otel_metric_namespace = "OtelNamespace";
+  MockHttp2ServerWithOverrides http_server(
+      host_address, port, async_executor, mock_authorization_proxy,
+      mock_metric_client, mock_config_provider, options);
+
+  nghttp2::asio_http2::server::request request;
+  nghttp2::asio_http2::server::response response;
+  auto mock_http2_request =
+      make_shared<MockNgHttp2RequestWithOverrides>(request);
+  auto mock_http2_response =
+      make_shared<MockNgHttp2ResponseWithOverrides>(response);
+  AsyncContext<NgHttp2Request, NgHttp2Response> ng_http2_context(
+      mock_http2_request,
+      [](AsyncContext<NgHttp2Request, NgHttp2Response>&) {});
+  ng_http2_context.response = mock_http2_response;
+  ng_http2_context.result = FailureExecutionResult(SC_UNKNOWN);
+
+  http_server.OnHttp2Response(ng_http2_context,
+                              Http2Server::RequestTargetEndpointType::Local);
+
+  // Validate Otel metric payload
+  EXPECT_EQ(captured_request.metric_namespace(), "OtelNamespace");
+  EXPECT_EQ(captured_request.metrics_size(), 1);
+  EXPECT_EQ(captured_request.metrics(0).name(), "HttpRequestLatency");
+  EXPECT_EQ(captured_request.metrics(0).unit(),
+            MetricUnit::METRIC_UNIT_MILLISECONDS);
+  EXPECT_EQ(captured_request.metrics(0).type(),
+            MetricType::METRIC_TYPE_HISTOGRAM);
+  EXPECT_EQ(captured_request.metrics(0).labels().at("ComponentName"),
+            "Http2Server");
+  EXPECT_EQ(captured_request.metrics(0).labels().at(kMetricLabelIsSuccessful),
+            "false");
+}
+
+TEST_F(Http2ServerTest, OtelAndLegacyMetricsBothRecordMetrics) {
+  string host_address("localhost");
+  string port("0");
+
+  auto mock_authorization_proxy = make_shared<MockAuthorizationProxy>();
+  auto mock_metric_client = make_shared<MockMetricClient>();
+  auto mock_factory = make_shared<cpio::MockMetricInstanceFactory>();
+  auto mock_aggregate_metric = make_shared<cpio::MockAggregateMetric>();
+
+  // 1. Verify legacy metric factory creates aggregate metric with legacy
+  // namespace
+  EXPECT_CALL(*mock_factory,
+              ConstructAggregateMetricInstance(
+                  testing::Field(&cpio::MetricDefinition::metric_namespace,
+                                 testing::Eq("TestMetricNamespace")),
+                  testing::_))
+      .WillOnce(Return(
+          testing::ByMove(std::make_unique<cpio::MockAggregateMetric>())));
+
+  // 2. Verify server does NOT manage Otel metric client lifecycle
+  EXPECT_CALL(*mock_metric_client, Init()).Times(0);
+  EXPECT_CALL(*mock_metric_client, Run()).Times(0);
+  EXPECT_CALL(*mock_metric_client, Stop()).Times(0);
+
+  Http2ServerOptions options(
+      false, make_shared<string>(), make_shared<string>(),
+      common::RetryStrategyOptions(common::RetryStrategyType::Exponential, 31,
+                                   3),
+      "TestMetricNamespace", "TestHttpServer", "TestOtelNamespace");
+
+  Http2Server server(host_address, port, 2, async_executor,
+                     mock_authorization_proxy, mock_factory, mock_metric_client,
+                     mock_config_provider, options);
+
+  EXPECT_SUCCESS(server.Init());
+  EXPECT_SUCCESS(server.Run());
+
+  // 3. Verify that on HTTP response, BOTH legacy metric Increment and Otel
+  // PutMetricsSync are invoked.
+  MockHttp2ServerWithOverrides http_server(
+      host_address, port, async_executor, mock_authorization_proxy,
+      mock_factory, mock_metric_client, mock_config_provider, options);
+  http_server.SetHttpRequestMetrics(mock_aggregate_metric);
+
+  // Expect legacy metric increment on 200 OK local response
+  EXPECT_CALL(*mock_aggregate_metric,
+              Increment(string(kMetricEventHttp2xxLocal)))
+      .Times(1);
+
+  // Expect Otel metric client PutMetricsSync for latency
+  PutMetricsRequest captured_request;
+  EXPECT_CALL(*mock_metric_client, PutMetricsSync(testing::_))
+      .WillOnce([&](PutMetricsRequest request) {
+        captured_request = std::move(request);
+        return PutMetricsResponse();
+      });
+
+  nghttp2::asio_http2::server::request request;
+  nghttp2::asio_http2::server::response response;
+  auto mock_http2_request = make_shared<MockNgHttp2RequestWithOverrides>(
+      request,
+      TimeProvider::GetSteadyTimestampInNanoseconds() -
+          std::chrono::nanoseconds(5'000'000),
+      10 /* body length */);
+  auto mock_http2_response =
+      make_shared<MockNgHttp2ResponseWithOverrides>(response);
+  AsyncContext<NgHttp2Request, NgHttp2Response> ng_http2_context(
+      mock_http2_request,
+      [](AsyncContext<NgHttp2Request, NgHttp2Response>&) {});
+  ng_http2_context.response = mock_http2_response;
+  ng_http2_context.result = SuccessExecutionResult();
+
+  http_server.OnHttp2Response(ng_http2_context,
+                              Http2Server::RequestTargetEndpointType::Local);
+
+  // Validate Otel metric payload
+  EXPECT_EQ(captured_request.metric_namespace(), "TestOtelNamespace");
+  EXPECT_EQ(captured_request.metrics_size(), 1);
+  EXPECT_EQ(captured_request.metrics(0).name(), "HttpRequestLatency");
+  EXPECT_EQ(captured_request.metrics(0).unit(),
+            MetricUnit::METRIC_UNIT_MILLISECONDS);
+  EXPECT_EQ(captured_request.metrics(0).type(),
+            MetricType::METRIC_TYPE_HISTOGRAM);
+  EXPECT_EQ(captured_request.metrics(0).labels().at("ComponentName"),
+            "Http2Server");
+  EXPECT_EQ(captured_request.metrics(0).labels().at(kMetricLabelIsSuccessful),
+            "true");
+
+  EXPECT_SUCCESS(server.Stop());
+}
+
+TEST_F(Http2ServerTest, HasOtelMetricsButNoLegacyMetricsClient) {
+  string host_address("localhost");
+  string port("0");
+
+  auto mock_authorization_proxy = make_shared<MockAuthorizationProxy>();
+  auto mock_metric_client = make_shared<MockMetricClient>();
+
+  EXPECT_CALL(*mock_metric_client, PutMetricsSync(testing::_))
+      .WillOnce(Return(PutMetricsResponse()));
+
+  Http2ServerOptions options;
+  // Using constructor omitting metric_instance_factory
+  Http2Server server(host_address, port, 2, async_executor,
+                     mock_authorization_proxy, mock_metric_client,
+                     mock_config_provider, options);
+
+  EXPECT_SUCCESS(server.Init());
+  EXPECT_SUCCESS(server.Run());
+
+  MockHttp2ServerWithOverrides http_server(
+      host_address, port, async_executor, mock_authorization_proxy,
+      mock_metric_client, mock_config_provider, options);
+
+  nghttp2::asio_http2::server::request request;
+  nghttp2::asio_http2::server::response response;
+  auto mock_http2_request =
+      make_shared<MockNgHttp2RequestWithOverrides>(request);
+  auto mock_http2_response =
+      make_shared<MockNgHttp2ResponseWithOverrides>(response);
+  AsyncContext<NgHttp2Request, NgHttp2Response> ng_http2_context(
+      mock_http2_request,
+      [](AsyncContext<NgHttp2Request, NgHttp2Response>&) {});
+  ng_http2_context.response = mock_http2_response;
+  ng_http2_context.result = SuccessExecutionResult();
+
+  // Ensure OnHttp2Response runs without throwing/crashing with null
+  // metric_instance_factory
+  http_server.OnHttp2Response(ng_http2_context,
+                              Http2Server::RequestTargetEndpointType::Local);
+
+  EXPECT_SUCCESS(server.Stop());
+}
 }  // namespace google::scp::core::test

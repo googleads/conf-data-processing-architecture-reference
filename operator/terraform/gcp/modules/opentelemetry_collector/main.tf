@@ -86,6 +86,11 @@ resource "google_project_iam_member" "collector_service_account_log_writer_iam" 
   member  = "serviceAccount:${local.collector_service_account_email}"
 }
 
+data "google_compute_image" "cos_image" {
+  family  = var.cos_image_family
+  project = "cos-cloud"
+}
+
 resource "google_compute_instance_template" "collector" {
   for_each = var.collector_regional_config
 
@@ -110,7 +115,7 @@ resource "google_compute_instance_template" "collector" {
 
   disk {
     device_name  = "${var.environment}-otel-collector"
-    source_image = "projects/cos-cloud/global/images/family/cos-121-lts"
+    source_image = data.google_compute_image.cos_image.self_link
   }
 
   network_interface {

@@ -109,7 +109,14 @@ WrappedKeyHandlerWithCacheBase<WrappedKeyType>::WrappedKeyHandlerWithCacheBase(
           async_executor),
       kms_client_(kms_client),
       wrapped_key_handler_options_(wrapped_key_handler_options),
-      metric_client_(metric_client) {}
+      metric_client_(metric_client) {
+  if (!wrapped_key_handler_options_.enable_cache) {
+    // Decryption lock only makes sense when cache is enabled. When caching is
+    // disabled, concurrent threads waiting for in-progress decryption cannot
+    // retrieve the decrypted DEK from the cache and will erroneously time out.
+    wrapped_key_handler_options_.enable_decryption_lock = false;
+  }
+}
 
 template <typename WrappedKeyType>
 ExecutionResult

@@ -887,6 +887,12 @@ variable "collector_instance_type" {
   default     = "n2d-standard-2"
 }
 
+variable "cos_image_family" {
+  description = "COS image family to use."
+  type        = string
+  default     = "cos-121-lts"
+}
+
 variable "user_provided_collector_sa_email" {
   description = "User provided service account email for OpenTelemetry Collector."
   type        = string

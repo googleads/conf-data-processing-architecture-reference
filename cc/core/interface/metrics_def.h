@@ -77,6 +77,10 @@ static constexpr char kMetricEventFinishedTransaction[] = "FinishedTransaction";
  */
 
 static constexpr char kMetricNameHttpRequest[] = "HttpRequest";
+static constexpr char kMetricNameHttpRequestLatency[] = "HttpRequestLatency";
+static constexpr char kMetricLabelIsSuccessful[] = "isSuccessful";
+static constexpr char kMetricLabelTrue[] = "true";
+static constexpr char kMetricLabelFalse[] = "false";
 static constexpr char kMetricEventHttpUnableToResolveRoute[] =
     "Can't Resolve Route 5xx";
 static constexpr char kMetricEventHttp2xxLocal[] = "Non-Forwarded 2xx";

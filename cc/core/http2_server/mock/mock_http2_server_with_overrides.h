@@ -31,14 +31,39 @@ class MockHttp2ServerWithOverrides : public core::Http2Server {
       std::string& host_address, std::string& port,
       const std::shared_ptr<AsyncExecutorInterface>& async_executor,
       const std::shared_ptr<AuthorizationProxyInterface>& authorization_proxy,
-      const std::shared_ptr<cpio::MetricInstanceFactoryInterface>
+      const std::shared_ptr<cpio::MetricInstanceFactoryInterface>&
           metric_instance_factory,
-      const std::shared_ptr<core::ConfigProviderInterface>& config_provider)
+      const std::shared_ptr<cpio::MetricClientInterface>& otel_metrics_client,
+      const std::shared_ptr<core::ConfigProviderInterface>& config_provider,
+      Http2ServerOptions options = Http2ServerOptions())
       : core::Http2Server(host_address, port, 2 /* thread_pool_size */,
                           async_executor, authorization_proxy,
-                          metric_instance_factory, config_provider) {}
+                          metric_instance_factory, otel_metrics_client,
+                          config_provider, options) {}
 
-  // Construct HTTP Server with Request Routing capabilities.
+  MockHttp2ServerWithOverrides(
+      std::string& host_address, std::string& port,
+      const std::shared_ptr<AsyncExecutorInterface>& async_executor,
+      const std::shared_ptr<AuthorizationProxyInterface>& authorization_proxy,
+      const std::shared_ptr<cpio::MetricInstanceFactoryInterface>&
+          metric_instance_factory,
+      const std::shared_ptr<core::ConfigProviderInterface>& config_provider,
+      Http2ServerOptions options = Http2ServerOptions())
+      : core::Http2Server(host_address, port, 2 /* thread_pool_size */,
+                          async_executor, authorization_proxy,
+                          metric_instance_factory, config_provider, options) {}
+
+  MockHttp2ServerWithOverrides(
+      std::string& host_address, std::string& port,
+      const std::shared_ptr<AsyncExecutorInterface>& async_executor,
+      const std::shared_ptr<AuthorizationProxyInterface>& authorization_proxy,
+      const std::shared_ptr<cpio::MetricClientInterface>& otel_metrics_client,
+      const std::shared_ptr<core::ConfigProviderInterface>& config_provider,
+      Http2ServerOptions options = Http2ServerOptions())
+      : core::Http2Server(host_address, port, 2 /* thread_pool_size */,
+                          async_executor, authorization_proxy,
+                          otel_metrics_client, config_provider, options) {}
+
   MockHttp2ServerWithOverrides(
       std::string& host_address, std::string& port, size_t thread_pool_size,
       const std::shared_ptr<AsyncExecutorInterface>& async_executor,
@@ -46,22 +71,24 @@ class MockHttp2ServerWithOverrides : public core::Http2Server {
       const std::shared_ptr<HttpRequestRouterInterface>& request_router,
       const std::shared_ptr<HttpRequestRouteResolverInterface>&
           request_route_resolver,
-      const std::shared_ptr<cpio::MetricInstanceFactoryInterface>&
-          metric_instance_factory,
+      const std::shared_ptr<cpio::MetricClientInterface>& otel_metrics_client,
       const std::shared_ptr<core::ConfigProviderInterface>& config_provider,
       Http2ServerOptions options = Http2ServerOptions())
       : Http2Server(host_address, port, thread_pool_size, async_executor,
-                    authorization_proxy, metric_instance_factory,
-                    config_provider, options) {
-    request_router_ = request_router;
-    request_route_resolver_ = request_route_resolver;
+                    authorization_proxy, request_router, request_route_resolver,
+                    otel_metrics_client, config_provider, options) {}
+
+  ExecutionResult MetricInit() noexcept override {
+    return SuccessExecutionResult();
   }
 
-  ExecutionResult MetricInit() noexcept { return SuccessExecutionResult(); }
+  ExecutionResult MetricRun() noexcept override {
+    return SuccessExecutionResult();
+  }
 
-  ExecutionResult MetricRun() noexcept { return SuccessExecutionResult(); }
-
-  ExecutionResult MetricStop() noexcept { return SuccessExecutionResult(); }
+  ExecutionResult MetricStop() noexcept override {
+    return SuccessExecutionResult();
+  }
 
   void OnHttp2Response(
       AsyncContext<NgHttp2Request, NgHttp2Response>& http_context,
@@ -116,6 +143,19 @@ class MockHttp2ServerWithOverrides : public core::Http2Server {
     core::Http2Server::OnHttp2Cleanup(activity_id, request_id, error_code);
   }
 
+  void RecordRequestLatency(AsyncContext<NgHttp2Request, NgHttp2Response>&
+                                http_context) noexcept override {
+    if (record_request_latency_mock_) {
+      record_request_latency_mock_(http_context);
+    }
+    core::Http2Server::RecordRequestLatency(http_context);
+  }
+
+  void SetHttpRequestMetrics(
+      std::shared_ptr<cpio::AggregateMetricInterface> metrics) {
+    http_request_metrics_ = std::move(metrics);
+  }
+
   common::ConcurrentMap<
       std::string,
       std::shared_ptr<common::ConcurrentMap<HttpMethod, HttpHandler>>>&
@@ -137,5 +177,8 @@ class MockHttp2ServerWithOverrides : public core::Http2Server {
   std::function<void(AsyncContext<NgHttp2Request, NgHttp2Response>&,
                      RequestTargetEndpointType)>
       on_http2_response_mock_;
+
+  std::function<void(AsyncContext<NgHttp2Request, NgHttp2Response>&)>
+      record_request_latency_mock_;
 };
 }  // namespace google::scp::core::http2_server::mock

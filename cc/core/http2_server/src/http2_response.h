@@ -48,7 +48,7 @@ class NgHttp2Response : public HttpResponse {
    *
    * @param work
    */
-  void SubmitWorkOnIoService(std::function<void()> work) noexcept;
+  virtual void SubmitWorkOnIoService(std::function<void()> work) noexcept;
 
   /**
    * @brief Sends the populated response back to the client.

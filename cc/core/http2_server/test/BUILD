@@ -37,6 +37,8 @@ cc_test(
         "//cc/core/http2_server/src:core_http2_server_lib",
         "//cc/core/test/utils:utils_lib",
         "//cc/public/core/test/interface:execution_result_matchers",
+        "//cc/public/cpio/interface/metric_client:metric_client_interface",
+        "//cc/public/cpio/mock/metric_client:metric_client_mock",
         "//cc/public/cpio/utils/metric_instance/mock:metric_instance_mock",
     ],
 )

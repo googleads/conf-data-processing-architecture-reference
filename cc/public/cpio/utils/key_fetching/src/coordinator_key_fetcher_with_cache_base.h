@@ -34,7 +34,15 @@
 
 namespace google::scp::cpio {
 
-class CoordinatorKeyFetcherWithCacheBase : public KeyFetcherWithCacheInterface {
+/**
+ * @brief Base class for cache that fetch keys from key coordinators.
+ *
+ * @tparam LookupKeyT The type of the key used to look up keys in the cache.
+ * Possible types are `std::string` (key IDs for cache of encryption keys) and
+ * `core::Timestamp` (timestamps for cache of SID keys).
+ */
+template <typename LookupKeyT>
+class CoordinatorKeyFetcherWithCacheBase {
  public:
   explicit CoordinatorKeyFetcherWithCacheBase(
       PrivateKeyClientInterface& key_client,
@@ -44,17 +52,13 @@ class CoordinatorKeyFetcherWithCacheBase : public KeyFetcherWithCacheInterface {
       KeyFetcherOptions key_fetcher_options, absl::string_view component_name,
       absl::string_view key_type, const std::string& metric_namespace = {});
 
-  core::ExecutionResultOr<Key> GetKey(
-      const std::string& key_id) noexcept override;
+  virtual ~CoordinatorKeyFetcherWithCacheBase() = default;
 
-  core::ExecutionResultOr<bool> ValidateKey(
-      const std::string& key_id) noexcept override;
+  core::ExecutionResult Init() noexcept;
 
-  core::ExecutionResult Init() noexcept override;
+  core::ExecutionResult Run() noexcept;
 
-  core::ExecutionResult Run() noexcept override;
-
-  core::ExecutionResult Stop() noexcept override;
+  core::ExecutionResult Stop() noexcept;
 
  protected:
   /// Cache valid keys.
@@ -63,47 +67,58 @@ class CoordinatorKeyFetcherWithCacheBase : public KeyFetcherWithCacheInterface {
   /**
    * @brief Get the Key From Valid Key Cache
    *
-   * @param key_id the given key ID
+   * @param lookup_key key used to lookup in the cache, can be string for key id
+   * or timestamp
    * @return std::optional<Key> found key
    */
   virtual std::optional<Key> GetKeyFromValidKeyCache(
-      const std::string& key_id) noexcept = 0;
+      const LookupKeyT& lookup_key) noexcept = 0;
 
   /**
-   * @brief Get the Key Fetching Failure from Cache for the Given Key ID
+   * @brief Get the Key Fetching Failure from Cache for the Given Lookup Key
    *
-   * @param key_id the given key ID
+   * @param lookup_key key used to lookup in the cache, can be string for key id
+   * or timestamp
    * @return std::optional<ExecutionResult> found failure result
    */
   virtual std::optional<core::ExecutionResult> GetFetchingFailureFromCache(
-      const std::string& key_id) noexcept = 0;
+      const LookupKeyT& lookup_key) noexcept = 0;
 
   /**
-   * @brief Cache failure result and key IDs for fetching failures
+   * @brief Cache failure result and lookup key for fetching failures
    *
-   * @param key_id key ID
+   * @param lookup_key key used to lookup in the cache, can be string for key id
+   * or timestamp
    * @param failure_result failure result
    */
   virtual void CacheFailureResult(
-      std::string key_id, core::ExecutionResult failure_result) noexcept = 0;
+      LookupKeyT lookup_key, core::ExecutionResult failure_result) noexcept = 0;
 
-  /// Remove key_id from in_progress cache.
-  virtual void MarkFetchingFinished(const std::string& key_id) noexcept = 0;
+  /// Mark key fetching status as finished.
+  virtual void MarkFetchingFinished(const LookupKeyT& lookup_key) noexcept = 0;
   /**
-   * @brief Add key_id to in_progress cache when it is not yet.
+   * @brief Mark the key fetching status as in progress when it is not yet.
    *
    * @return true made the operation.
-   * @return false the key_id is already in the in progress cache and skip add.
+   * @return false the status is already in progress and skip add.
    */
-  virtual bool MarkFetchingInProgress(const std::string& key_id) noexcept = 0;
-  /// Check if the key_id is in the in progress cache.
-  virtual bool FetchingInProgress(const std::string& key_id) noexcept = 0;
+  virtual bool MarkFetchingInProgress(
+      const LookupKeyT& lookup_key) noexcept = 0;
+  /// Check if the key fetching is in progress.
+  virtual bool FetchingInProgress(const LookupKeyT& lookup_key) noexcept = 0;
 
- private:
+  /// Construct ListPrivateKeysRequest with lookup_key added to request_base.
+  virtual google::cmrt::sdk::private_key_service::v1::ListPrivateKeysRequest
+  GetListPrivateKeysRequest(
+      const google::cmrt::sdk::private_key_service::v1::ListPrivateKeysRequest&
+          request_base,
+      const LookupKeyT& lookup_key) const noexcept = 0;
+
   // Get the key from valid key cache or fetch it from remote.
   core::ExecutionResultOr<Key> GetKeyInternal(
-      const std::string& key_id) noexcept;
+      const LookupKeyT& lookup_key) noexcept;
 
+ private:
   // The input keyset_name is only used for metrics.
   core::ExecutionResultOr<
       google::cmrt::sdk::private_key_service::v1::ListPrivateKeysResponse>
@@ -151,28 +166,30 @@ class CoordinatorKeyFetcherWithCacheBase : public KeyFetcherWithCacheInterface {
    * @brief Fetch key from remote, validate the key and cache the key in valid
    * key or failed key caches.
    *
-   * @param key_id the given key ID
+   * @param lookup_key key used to lookup in the cache, can be string for key id
+   * or timestamp
    * @return ExecutionResultOr<Key> fetch and validate result
    */
   core::ExecutionResultOr<Key> FetchValidateAndCacheKey(
-      const std::string& key_id) noexcept;
+      const LookupKeyT& lookup_key) noexcept;
 
   /**
    * @brief Validate list keys result and cache the valid key or cache the
    * failure.
    *
-   * @param key_id key ID
+   * @param lookup_key key used to lookup in the cache, can be string for key id
+   * or timestamp
    * @param list_keys_response_or list keys result
    * @return ExecutionResultOr<Key> cached valid key or failure
    */
   core::ExecutionResultOr<Key> ValidateAndCacheKey(
-      const std::string key_id,
+      const LookupKeyT lookup_key,
       const core::ExecutionResultOr<
           google::cmrt::sdk::private_key_service::v1::ListPrivateKeysResponse>&
           list_keys_response_or) noexcept;
 
   /// Wait for the key fetching finishing.
-  void WaitForKeyReady(const std::string& key_id) noexcept;
+  void WaitForKeyReady(const LookupKeyT& lookup_key) noexcept;
 
   // Function to convert an error during key fetching to a string
   // for metric recording.

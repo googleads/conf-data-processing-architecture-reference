@@ -16,6 +16,7 @@
 
 #include "http2_server.h"
 
+#include <chrono>
 #include <memory>
 #include <optional>
 #include <set>
@@ -31,12 +32,14 @@
 #include "absl/strings/str_cat.h"
 #include "core/authorization_proxy/src/error_codes.h"
 #include "core/common/concurrent_map/src/error_codes.h"
+#include "core/common/time_provider/src/time_provider.h"
 #include "core/common/uuid/src/uuid.h"
 #include "core/interface/configuration_keys.h"
 #include "core/interface/errors.h"
 #include "core/interface/metrics_def.h"
 #include "public/core/interface/execution_result_macros.h"
 #include "public/core/interface/execution_result_or_macros.h"
+#include "public/cpio/proto/metric_service/v1/metric_service.pb.h"
 #include "public/cpio/utils/metric_instance/interface/type_def.h"
 #include "public/cpio/utils/metric_instance/src/aggregate_metric.h"
 #include "public/cpio/utils/metric_instance/src/metric_utils.h"
@@ -47,9 +50,13 @@ using absl::StrCat;
 using boost::asio::ssl::context;
 using boost::system::error_code;
 using boost::system::errc::success;
+using google::cmrt::sdk::metric_service::v1::Metric;
+using google::cmrt::sdk::metric_service::v1::MetricType;
 using google::cmrt::sdk::metric_service::v1::MetricUnit;
+using google::cmrt::sdk::metric_service::v1::PutMetricsRequest;
 using google::scp::core::common::ConcurrentMap;
 using google::scp::core::common::kZeroUuid;
+using google::scp::core::common::TimeProvider;
 using google::scp::core::common::Uuid;
 using google::scp::core::errors::GetErrorHttpStatusCode;
 using google::scp::core::errors::HttpStatusCode;
@@ -104,28 +111,37 @@ static const set<HttpStatusCode> kHttpStatusCode5xxMap = {
 
 namespace google::scp::core {
 ExecutionResult Http2Server::MetricInit() noexcept {
-  auto metric_labels =
-      MetricUtils::CreateMetricLabelsWithComponentSignature(kHttp2Server);
-  auto metric_info =
-      MetricDefinition(metric_name_.value_or(kMetricNameHttpRequest),
-                       MetricUnit::METRIC_UNIT_COUNT_PER_SECOND,
-                       metric_namespace_, std::move(metric_labels));
-  http_request_metrics_ =
-      metric_instance_factory_->ConstructAggregateMetricInstance(
-          std::move(metric_info),
-          {kMetricEventHttpUnableToResolveRoute, kMetricEventHttp2xxLocal,
-           kMetricEventHttp4xxLocal, kMetricEventHttp5xxLocal,
-           kMetricEventHttp2xxForwarded, kMetricEventHttp4xxForwarded,
-           kMetricEventHttp5xxForwarded});
-  return http_request_metrics_->Init();
+  if (metric_instance_factory_) {
+    auto metric_labels =
+        MetricUtils::CreateMetricLabelsWithComponentSignature(kHttp2Server);
+    auto metric_info =
+        MetricDefinition(metric_name_.value_or(kMetricNameHttpRequest),
+                         MetricUnit::METRIC_UNIT_COUNT_PER_SECOND,
+                         metric_namespace_, std::move(metric_labels));
+    http_request_metrics_ =
+        metric_instance_factory_->ConstructAggregateMetricInstance(
+            std::move(metric_info),
+            {kMetricEventHttpUnableToResolveRoute, kMetricEventHttp2xxLocal,
+             kMetricEventHttp4xxLocal, kMetricEventHttp5xxLocal,
+             kMetricEventHttp2xxForwarded, kMetricEventHttp4xxForwarded,
+             kMetricEventHttp5xxForwarded});
+    RETURN_IF_FAILURE(http_request_metrics_->Init());
+  }
+  return SuccessExecutionResult();
 }
 
 ExecutionResult Http2Server::MetricRun() noexcept {
-  return http_request_metrics_->Run();
+  if (http_request_metrics_) {
+    RETURN_IF_FAILURE(http_request_metrics_->Run());
+  }
+  return SuccessExecutionResult();
 }
 
 ExecutionResult Http2Server::MetricStop() noexcept {
-  return http_request_metrics_->Stop();
+  if (http_request_metrics_) {
+    return http_request_metrics_->Stop();
+  }
+  return SuccessExecutionResult();
 }
 
 ExecutionResult Http2Server::Init() noexcept {
@@ -260,8 +276,11 @@ ExecutionResult Http2Server::RegisterResourceHandler(
 
 void Http2Server::OnHttp2Request(const request& request,
                                  const response& response) noexcept {
+  auto request_start_timestamp =
+      common::TimeProvider::GetSteadyTimestampInNanoseconds();
   auto parent_activity_id = Uuid::GenerateUuid();
-  auto http2Request = make_shared<NgHttp2Request>(request);
+  auto http2Request =
+      make_shared<NgHttp2Request>(request, request_start_timestamp);
   auto request_endpoint_type = RequestTargetEndpointType::Unknown;
   if (!IsRequestForwardingEnabled()) {
     request_endpoint_type = RequestTargetEndpointType::Local;
@@ -582,6 +601,10 @@ static void IncrementHttpResponseMetric(
     shared_ptr<AggregateMetricInterface> metric,
     errors::HttpStatusCode error_code,
     Http2Server::RequestTargetEndpointType endpoint_type) {
+  if (!metric) {
+    return;
+  }
+
   // Unknown state happens when the routing is enabled and the request route
   // cannot be determined. For this, we always send a 5xx error code. See
   if (endpoint_type == Http2Server::RequestTargetEndpointType::Unknown) {
@@ -615,6 +638,44 @@ static void IncrementHttpResponseMetric(
   }
 }
 
+void Http2Server::RecordRequestLatency(
+    AsyncContext<NgHttp2Request, NgHttp2Response>& http_context) noexcept {
+  if (!otel_metrics_client_ || !http_context.request) {
+    return;
+  }
+
+  auto current_timestamp = TimeProvider::GetSteadyTimestampInNanoseconds();
+  double latency_in_ms = 0.0;
+  if (current_timestamp > http_context.request->GetRequestStartTimestamp()) {
+    std::chrono::duration<double, std::milli> elapsed_ms =
+        current_timestamp - http_context.request->GetRequestStartTimestamp();
+    latency_in_ms = elapsed_ms.count();
+  }
+
+  Metric latency_metric;
+  latency_metric.set_name(kMetricNameHttpRequestLatency);
+  latency_metric.set_value(absl::StrCat(latency_in_ms));
+  latency_metric.set_unit(MetricUnit::METRIC_UNIT_MILLISECONDS);
+  latency_metric.set_type(MetricType::METRIC_TYPE_HISTOGRAM);
+  auto metric_labels =
+      MetricUtils::CreateMetricLabelsWithComponentSignature(kHttp2Server);
+  *latency_metric.mutable_labels() = {metric_labels.begin(),
+                                      metric_labels.end()};
+  (*latency_metric.mutable_labels())[kMetricLabelIsSuccessful] =
+      http_context.result.Successful() ? kMetricLabelTrue : kMetricLabelFalse;
+
+  PutMetricsRequest put_metrics_request;
+  put_metrics_request.set_metric_namespace(
+      otel_metric_namespace_.value_or("http2_server"));
+  *put_metrics_request.add_metrics() = std::move(latency_metric);
+
+  auto result_or = otel_metrics_client_->PutMetricsSync(put_metrics_request);
+  if (!result_or.Successful()) {
+    SCP_ERROR_CONTEXT(kHttp2Server, http_context, result_or.result(),
+                      "Failed to put http2 request latency metric.");
+  }
+}
+
 void Http2Server::OnHttp2Response(
     AsyncContext<NgHttp2Request, NgHttp2Response>& http_context,
     RequestTargetEndpointType endpoint_type) noexcept {
@@ -639,6 +700,8 @@ void Http2Server::OnHttp2Response(
   // Put metric if available
   IncrementHttpResponseMetric(http_request_metrics_,
                               http_context.response->code, endpoint_type);
+
+  RecordRequestLatency(http_context);
 
   // Capture the shared_ptr to keep the response object alive when the work
   // actually starts executing. Do not execute response->Send() on a thread that

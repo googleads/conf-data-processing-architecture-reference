@@ -38,6 +38,7 @@ variables {
   region                           = ""
   user_provided_collector_sa_email = ""
   collector_instance_type          = ""
+  cos_image_family                 = "cos-121-lts"
   collector_startup_script         = "script"
   collector_service_port           = 0
   collector_service_port_name      = "port_name"
@@ -305,5 +306,42 @@ run "verify_instance_template_tags" {
   assert {
     condition     = contains(google_compute_instance_template.collector["us-central1"].tags, var.internet_tag_for_otel)
     error_message = "Instance template tags do not contain the expected tag: ${var.internet_tag_for_otel}"
+  }
+}
+
+run "verify_instance_template_image" {
+  command = plan
+
+  assert {
+    condition     = data.google_compute_image.cos_image.family == "cos-121-lts"
+    error_message = "cos_image data source does not use the expected cos_image_family"
+  }
+
+  assert {
+    condition     = data.google_compute_image.cos_image.project == "cos-cloud"
+    error_message = "cos_image data source does not use the expected cos-cloud project"
+  }
+
+  assert {
+    condition     = google_compute_instance_template.collector["us-central1"].disk[0].source_image == "google_compute_image_self_link"
+    error_message = "Instance template does not use the dynamic cos_image data source"
+  }
+}
+
+run "verify_instance_template_custom_image_family" {
+  command = plan
+
+  variables {
+    cos_image_family = "custom-cos-family"
+  }
+
+  assert {
+    condition     = data.google_compute_image.cos_image.family == "custom-cos-family"
+    error_message = "cos_image data source does not use the configured cos_image_family"
+  }
+
+  assert {
+    condition     = google_compute_instance_template.collector["us-central1"].disk[0].source_image == "google_compute_image_self_link"
+    error_message = "Instance template does not use the dynamic cos_image data source"
   }
 }

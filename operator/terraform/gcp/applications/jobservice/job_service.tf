@@ -313,6 +313,7 @@ module "otel_collector" {
 
   user_provided_collector_sa_email = var.user_provided_collector_sa_email
   collector_instance_type          = var.collector_instance_type
+  cos_image_family                 = var.cos_image_family
   otel_collector_startup_config    = var.otel_collector_startup_config
   collector_service_port_name      = var.collector_service_port_name
   collector_service_port           = var.collector_service_port

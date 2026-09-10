@@ -28,6 +28,14 @@ class MockNgHttp2ResponseWithOverrides : public NgHttp2Response {
   explicit MockNgHttp2ResponseWithOverrides(
       const nghttp2::asio_http2::server::response& ng2_response)
       : NgHttp2Response(ng2_response) {}
+
+  void SubmitWorkOnIoService(std::function<void()> work) noexcept override {
+    if (submit_work_mock_) {
+      submit_work_mock_(work);
+    }
+  }
+
+  std::function<void(std::function<void()>)> submit_work_mock_;
 };
 
 }  // namespace google::scp::core::http2_server::mock

@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include <chrono>
 #include <memory>
 #include <string>
 
@@ -27,8 +28,10 @@ class MockNgHttp2RequestWithOverrides : public NgHttp2Request {
  public:
   MockNgHttp2RequestWithOverrides(
       const nghttp2::asio_http2::server::request& ng2_request,
+      std::chrono::nanoseconds start_timestamp =
+          std::chrono::nanoseconds(1000000),
       size_t expected_request_body_length_to_receive = 1024)
-      : NgHttp2Request(ng2_request) {
+      : NgHttp2Request(ng2_request, start_timestamp) {
     body = BytesBuffer(expected_request_body_length_to_receive);
     expected_request_body_length_to_receive_ =
         expected_request_body_length_to_receive;

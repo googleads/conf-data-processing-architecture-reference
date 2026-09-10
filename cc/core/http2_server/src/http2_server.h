@@ -35,6 +35,8 @@
 #include "core/interface/configuration_keys.h"
 #include "core/interface/http_request_route_resolver_interface.h"
 #include "core/interface/http_request_router_interface.h"
+#include "public/cpio/interface/metric_client/metric_client_interface.h"
+#include "public/cpio/interface/metric_client/type_def.h"
 #include "public/cpio/utils/metric_instance/interface/aggregate_metric_interface.h"
 #include "public/cpio/utils/metric_instance/interface/metric_instance_factory_interface.h"
 
@@ -45,17 +47,9 @@ namespace google::scp::core {
 
 class Http2ServerOptions {
  public:
-  Http2ServerOptions()
-      : use_tls(false),
-        private_key_file(std::make_shared<std::string>()),
-        certificate_chain_file(std::make_shared<std::string>()),
-        retry_strategy_options(
-            common::RetryStrategyOptions(common::RetryStrategyType::Exponential,
-                                         kHttpServerRetryStrategyDelayInMs,
-                                         kDefaultRetryStrategyMaxRetries)),
-        metric_namespace(std::nullopt),
-        metric_name(std::nullopt) {}
+  Http2ServerOptions() = default;
 
+  // Full constructor with default arguments for optional parameters.
   Http2ServerOptions(
       bool use_tls, std::shared_ptr<std::string> private_key_file,
       std::shared_ptr<std::string> certificate_chain_file,
@@ -64,26 +58,35 @@ class Http2ServerOptions {
                                        kHttpServerRetryStrategyDelayInMs,
                                        kDefaultRetryStrategyMaxRetries),
       std::optional<std::string> metric_namespace = std::nullopt,
-      std::optional<std::string> metric_name = std::nullopt)
+      std::optional<std::string> metric_name = std::nullopt,
+      std::optional<std::string> otel_metric_namespace = std::nullopt)
       : use_tls(use_tls),
         private_key_file(std::move(private_key_file)),
         certificate_chain_file(std::move(certificate_chain_file)),
         retry_strategy_options(retry_strategy_options),
-        metric_namespace(metric_namespace),
-        metric_name(metric_name) {}
+        metric_namespace(std::move(metric_namespace)),
+        metric_name(std::move(metric_name)),
+        otel_metric_namespace(std::move(otel_metric_namespace)) {}
 
   /// Whether to use TLS.
-  const bool use_tls;
+  bool use_tls = false;
   /// The path and filename to the server private key file.
-  const std::shared_ptr<std::string> private_key_file;
+  std::shared_ptr<std::string> private_key_file =
+      std::make_shared<std::string>();
   /// The path and filename of the server certificate chain file.
-  const std::shared_ptr<std::string> certificate_chain_file;
+  std::shared_ptr<std::string> certificate_chain_file =
+      std::make_shared<std::string>();
   /// Retry strategy options.
-  const common::RetryStrategyOptions retry_strategy_options;
-  /// The metric namespace to use when recording server metrics.
-  const std::optional<std::string> metric_namespace;
+  common::RetryStrategyOptions retry_strategy_options{
+      common::RetryStrategyType::Exponential, kHttpServerRetryStrategyDelayInMs,
+      kDefaultRetryStrategyMaxRetries};
+  /// The metric namespace to use when recording server metrics via legacy
+  /// metric instance factory.
+  std::optional<std::string> metric_namespace = std::nullopt;
   /// The metric name to use when recording server metrics.
-  const std::optional<std::string> metric_name;
+  std::optional<std::string> metric_name = std::nullopt;
+  /// The optional metric namespace to use when recording OpenTelemetry metrics.
+  std::optional<std::string> otel_metric_namespace = std::nullopt;
 
  private:
   static constexpr TimeDuration kHttpServerRetryStrategyDelayInMs = 31;
@@ -99,6 +102,7 @@ class Http2Server : public HttpServerInterface {
       const std::shared_ptr<AuthorizationProxyInterface>& authorization_proxy,
       const std::shared_ptr<cpio::MetricInstanceFactoryInterface>&
           metric_instance_factory,
+      const std::shared_ptr<cpio::MetricClientInterface>& otel_metrics_client,
       const std::shared_ptr<core::ConfigProviderInterface>& config_provider,
       Http2ServerOptions options = Http2ServerOptions())
       : host_address_(host_address),
@@ -118,9 +122,12 @@ class Http2Server : public HttpServerInterface {
         tls_context_(boost::asio::ssl::context::sslv23),
         request_routing_enabled_(false),
         metric_namespace_(options.metric_namespace),
-        metric_name_(options.metric_name) {}
+        metric_name_(options.metric_name),
+        otel_metrics_client_(otel_metrics_client),
+        otel_metric_namespace_(options.otel_metric_namespace) {}
 
-  // Construct HTTP Server with Request Routing capabilities.
+  // Construct HTTP Server with Request Routing capabilities and Otel metrics
+  // client.
   Http2Server(
       std::string& host_address, std::string& port, size_t thread_pool_size,
       const std::shared_ptr<AsyncExecutorInterface>& async_executor,
@@ -128,16 +135,43 @@ class Http2Server : public HttpServerInterface {
       const std::shared_ptr<HttpRequestRouterInterface>& request_router,
       const std::shared_ptr<HttpRequestRouteResolverInterface>&
           request_route_resolver,
+      const std::shared_ptr<cpio::MetricClientInterface>& otel_metrics_client,
+      const std::shared_ptr<core::ConfigProviderInterface>& config_provider,
+      Http2ServerOptions options = Http2ServerOptions())
+      : Http2Server(host_address, port, thread_pool_size, async_executor,
+                    authorization_proxy,
+                    std::shared_ptr<cpio::MetricInstanceFactoryInterface>(),
+                    otel_metrics_client, config_provider, options) {
+    request_router_ = request_router;
+    request_route_resolver_ = request_route_resolver;
+  }
+
+  // Constructor with legacy metric_instance_factory.
+  Http2Server(
+      std::string& host_address, std::string& port, size_t thread_pool_size,
+      const std::shared_ptr<AsyncExecutorInterface>& async_executor,
+      const std::shared_ptr<AuthorizationProxyInterface>& authorization_proxy,
       const std::shared_ptr<cpio::MetricInstanceFactoryInterface>&
           metric_instance_factory,
       const std::shared_ptr<core::ConfigProviderInterface>& config_provider,
       Http2ServerOptions options = Http2ServerOptions())
       : Http2Server(host_address, port, thread_pool_size, async_executor,
                     authorization_proxy, metric_instance_factory,
-                    config_provider, options) {
-    request_router_ = request_router;
-    request_route_resolver_ = request_route_resolver;
-  }
+                    std::shared_ptr<cpio::MetricClientInterface>(),
+                    config_provider, options) {}
+
+  // Constructor with otel metrics client.
+  Http2Server(
+      std::string& host_address, std::string& port, size_t thread_pool_size,
+      const std::shared_ptr<AsyncExecutorInterface>& async_executor,
+      const std::shared_ptr<AuthorizationProxyInterface>& authorization_proxy,
+      const std::shared_ptr<cpio::MetricClientInterface>& otel_metrics_client,
+      const std::shared_ptr<core::ConfigProviderInterface>& config_provider,
+      Http2ServerOptions options = Http2ServerOptions())
+      : Http2Server(host_address, port, thread_pool_size, async_executor,
+                    authorization_proxy,
+                    std::shared_ptr<cpio::MetricInstanceFactoryInterface>(),
+                    otel_metrics_client, config_provider, options) {}
 
   ExecutionResult Init() noexcept override;
 
@@ -187,6 +221,15 @@ class Http2Server : public HttpServerInterface {
   virtual ExecutionResult MetricRun() noexcept;
   /// Stop http_error_metrics_ instance.
   virtual ExecutionResult MetricStop() noexcept;
+
+  /**
+   * @brief Records end to end request handling latency metric to OpenTelemetry
+   * metric client.
+   *
+   * @param http_context The context of the http2 request.
+   */
+  virtual void RecordRequestLatency(
+      AsyncContext<NgHttp2Request, NgHttp2Response>& http_context) noexcept;
 
   /**
    * @brief  nghttp2 callback, A handler for ng2 native request response and
@@ -392,10 +435,17 @@ class Http2Server : public HttpServerInterface {
   /// @brief enables disables request routing.
   bool request_routing_enabled_;
 
-  /// @brief The metric namespace to use when recording server metrics.
+  /// @brief The metric namespace to use when recording server metrics via
+  /// legacy metric instance factory.
   std::optional<std::string> metric_namespace_;
 
   /// @brief The metric name to use when recording server metrics.
   std::optional<std::string> metric_name_;
+
+  /// @brief OpenTelemetry Metric client instance to record latency metrics.
+  std::shared_ptr<cpio::MetricClientInterface> otel_metrics_client_;
+
+  /// @brief The metric namespace to use when recording OpenTelemetry metrics.
+  std::optional<std::string> otel_metric_namespace_;
 };
 }  // namespace google::scp::core

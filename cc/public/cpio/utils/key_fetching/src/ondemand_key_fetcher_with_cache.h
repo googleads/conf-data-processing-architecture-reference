@@ -25,7 +25,9 @@
 
 namespace google::scp::cpio {
 
-class OndemandKeyFetcherWithCache : public CoordinatorKeyFetcherWithCacheBase {
+class OndemandKeyFetcherWithCache
+    : public CoordinatorKeyFetcherWithCacheBase<std::string>,
+      public KeyFetcherWithCacheInterface {
  public:
   explicit OndemandKeyFetcherWithCache(
       std::shared_ptr<google::scp::core::AsyncExecutorInterface>&
@@ -42,6 +44,12 @@ class OndemandKeyFetcherWithCache : public CoordinatorKeyFetcherWithCacheBase {
   core::ExecutionResult Run() noexcept override;
 
   core::ExecutionResult Stop() noexcept override;
+
+  core::ExecutionResultOr<Key> GetKey(
+      const std::string& key_id) noexcept override;
+
+  core::ExecutionResultOr<bool> ValidateKey(
+      const std::string& key_id) noexcept override;
 
  private:
   /// Cache valid keys.
@@ -86,6 +94,13 @@ class OndemandKeyFetcherWithCache : public CoordinatorKeyFetcherWithCacheBase {
   bool MarkFetchingInProgress(const std::string& key_id) noexcept override;
   /// Check if the key_id is in the in progress cache.
   bool FetchingInProgress(const std::string& key_id) noexcept override;
+
+  /// Construct ListPrivateKeysRequest with key_id added to request_base.
+  google::cmrt::sdk::private_key_service::v1::ListPrivateKeysRequest
+  GetListPrivateKeysRequest(
+      const google::cmrt::sdk::private_key_service::v1::ListPrivateKeysRequest&
+          request_base,
+      const std::string& key_id) const noexcept override;
 
   core::common::AutoExpiryConcurrentMap<std::string, Key> key_cache_;
   // A cache of key IDs and key fetching failures.

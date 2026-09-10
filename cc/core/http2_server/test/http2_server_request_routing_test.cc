@@ -42,7 +42,7 @@
 #include "core/interface/http_request_router_interface.h"
 #include "core/test/utils/conditional_wait.h"
 #include "public/core/test/interface/execution_result_matchers.h"
-#include "public/cpio/utils/metric_instance/mock/mock_metric_instance_factory.h"
+#include "public/cpio/mock/metric_client/mock_metric_client.h"
 
 using google::scp::core::AsyncContext;
 using google::scp::core::AsyncExecutor;
@@ -59,8 +59,8 @@ using google::scp::core::http2_server::mock::MockHttp2ServerWithOverrides;
 using google::scp::core::http2_server::mock::MockNgHttp2RequestWithOverrides;
 using google::scp::core::http2_server::mock::MockNgHttp2ResponseWithOverrides;
 using google::scp::core::test::WaitUntil;
-using google::scp::cpio::MetricInstanceFactoryInterface;
-using google::scp::cpio::MockMetricInstanceFactory;
+using google::scp::cpio::MetricClientInterface;
+using google::scp::cpio::MockMetricClient;
 using std::make_shared;
 using std::promise;
 using std::shared_ptr;
@@ -99,8 +99,8 @@ class Http2RequestRouterTest : public testing::Test {
     mock_config_provider_ = std::make_shared<MockConfigProvider>();
     mock_request_route_resolver_ = std::make_shared<MockRequestRouteResolver>();
     mock_request_router_ = std::make_shared<MockHttp2Forwarder>();
-    shared_ptr<MetricInstanceFactoryInterface> mock_metric_instance_factory =
-        make_shared<MockMetricInstanceFactory>();
+    shared_ptr<MetricClientInterface> mock_metric_client =
+        make_shared<MockMetricClient>();
     std::shared_ptr<HttpRequestRouteResolverInterface> request_route_resolver =
         mock_request_route_resolver_;
     std::shared_ptr<HttpRequestRouterInterface> request_router =
@@ -112,7 +112,7 @@ class Http2RequestRouterTest : public testing::Test {
     http_server_ = std::make_shared<MockHttp2ServerWithOverrides>(
         host_address_, port_, thread_pool_size, async_executor_,
         mock_authorization_proxy, request_router, request_route_resolver,
-        mock_metric_instance_factory, mock_config_provider_);
+        mock_metric_client, mock_config_provider_);
     // real HandleHttpRequest should not be invoked.
     http_server_->handle_http2_request_mock_ = [&](auto&, auto&) {};
 

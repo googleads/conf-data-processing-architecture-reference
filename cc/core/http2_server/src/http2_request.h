@@ -17,6 +17,7 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <functional>
 #include <memory>
 #include <string>
@@ -25,6 +26,7 @@
 #include <nghttp2/asio_http2_server.h>
 
 #include "cc/core/interface/http_server_interface.h"
+#include "core/common/time_provider/src/time_provider.h"
 #include "core/common/uuid/src/uuid.h"
 
 namespace google::scp::core {
@@ -35,8 +37,11 @@ namespace google::scp::core {
 class NgHttp2Request : public HttpRequest {
  public:
   explicit NgHttp2Request(
-      const nghttp2::asio_http2::server::request& ng2_request)
-      : id(common::Uuid::GenerateUuid()), ng2_request_(ng2_request) {}
+      const nghttp2::asio_http2::server::request& ng2_request,
+      std::chrono::nanoseconds request_start_timestamp)
+      : id(common::Uuid::GenerateUuid()),
+        ng2_request_(ng2_request),
+        request_start_timestamp_(request_start_timestamp) {}
 
   using RequestBodyDataReceivedCallback = std::function<void(ExecutionResult)>;
 
@@ -46,6 +51,15 @@ class NgHttp2Request : public HttpRequest {
    * @return ExecutionResult The execution result of the operation.
    */
   ExecutionResult UnwrapNgHttp2Request() noexcept;
+
+  /**
+   * @brief Returns the request start timestamp.
+   *
+   * @return std::chrono::nanoseconds The request start timestamp.
+   */
+  std::chrono::nanoseconds GetRequestStartTimestamp() const {
+    return request_start_timestamp_;
+  }
 
   /// Path of the handler in the URI.
   /// Example: https://www.foo.com/handler/path, '/handler/path' is the
@@ -102,6 +116,9 @@ class NgHttp2Request : public HttpRequest {
  private:
   /// A ref to the original ng2_request.
   const nghttp2::asio_http2::server::request& ng2_request_;
+
+  /// The timestamp when the request was received.
+  const std::chrono::nanoseconds request_start_timestamp_;
 };
 
 }  // namespace google::scp::core

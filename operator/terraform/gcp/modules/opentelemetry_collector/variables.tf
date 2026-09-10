@@ -62,6 +62,11 @@ variable "collector_instance_type" {
   type        = string
 }
 
+variable "cos_image_family" {
+  description = "COS image family to use."
+  type        = string
+}
+
 variable "collector_min_instance_ready_sec" {
   description = "Waiting time for the new instance to be ready."
   type        = number
@@ -97,6 +102,7 @@ variable "subnets_per_region" {
   type        = map(string)
 }
 
+################################################################################
 # Alarm Variables.
 ################################################################################
 

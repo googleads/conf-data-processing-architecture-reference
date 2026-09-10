@@ -23,6 +23,7 @@
 
 #include "core/common/global_logger/src/global_logger.h"
 #include "public/core/interface/execution_result_macros.h"
+#include "public/core/interface/execution_result_or_macros.h"
 #include "public/cpio/utils/key_fetching/proto/key_coordinator_configuration.pb.h"
 #include "public/cpio/utils/key_fetching/src/key_fetching_metric_utils.h"
 
@@ -69,7 +70,7 @@ OndemandKeyFetcherWithCache::OndemandKeyFetcherWithCache(
     DualWritingMetricClientInterface& metric_client,
     const KeyCoordinatorConfiguration& key_service_options,
     KeyFetcherOptions key_fetcher_options, const std::string& metric_namespace)
-    : CoordinatorKeyFetcherWithCacheBase(
+    : CoordinatorKeyFetcherWithCacheBase<std::string>(
           key_client, metric_client, key_service_options, key_fetcher_options,
           kOndemandKeyFetcherWithCacheComponentName, KeyType::kEncryptionKey,
           metric_namespace),
@@ -119,6 +120,20 @@ ExecutionResult OndemandKeyFetcherWithCache::Stop() noexcept {
       fetching_failure_cache_.Stop(), kOndemandKeyFetcherWithCacheComponentName,
       kZeroUuid, "Failed to stop fetching_failure_cache_.");
   return SuccessExecutionResult();
+}
+
+core::ExecutionResultOr<Key> OndemandKeyFetcherWithCache::GetKey(
+    const std::string& key_id) noexcept {
+  return GetKeyInternal(key_id);
+}
+
+core::ExecutionResultOr<bool> OndemandKeyFetcherWithCache::ValidateKey(
+    const std::string& key_id) noexcept {
+  ASSIGN_OR_RETURN(auto key, GetKeyInternal(key_id));
+  if (!key.private_key.empty()) {
+    return true;
+  }
+  return false;
 }
 
 void OndemandKeyFetcherWithCache::CacheValidKey(
@@ -200,5 +215,16 @@ bool OndemandKeyFetcherWithCache::FetchingInProgress(
   in_progress = it != in_progress_key_cache_.end();
   lock.unlock();
   return in_progress;
+}
+
+google::cmrt::sdk::private_key_service::v1::ListPrivateKeysRequest
+OndemandKeyFetcherWithCache::GetListPrivateKeysRequest(
+    const google::cmrt::sdk::private_key_service::v1::ListPrivateKeysRequest&
+        request_base,
+    const std::string& key_id) const noexcept {
+  google::cmrt::sdk::private_key_service::v1::ListPrivateKeysRequest request;
+  request.CopyFrom(request_base);
+  request.add_key_ids(key_id);
+  return request;
 }
 }  // namespace google::scp::cpio

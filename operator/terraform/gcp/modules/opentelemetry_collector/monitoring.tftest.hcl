@@ -41,6 +41,7 @@ variables {
   internet_tag_for_otel            = "egress-internet"
   user_provided_collector_sa_email = ""
   collector_instance_type          = ""
+  cos_image_family                 = "cos-121-lts"
   collector_startup_script         = ""
   collector_service_port_name      = ""
   collector_service_port           = 0
